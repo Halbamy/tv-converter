@@ -2,18 +2,18 @@ source:
   type: mythtv
 
   mythtv:
-    host: 192.168.0.27
+    host:
     user: mythtv
     password: mythtv
     database: mythconverg
 
     output:
-      directory: /media/storage0/tvheadend/imported_from_mythtv
+      directory:
 
     delete_after_import: false
 
   tvheadend:
-    url: http://192.168.0.33:9981
+    url:
 
     authentication:
       type: persistent_auth     # basic | persistent_auth
@@ -59,21 +59,21 @@ service:
   poll_interval: 300
 
 mqtt:
-  enabled: true
-  broker: 192.168.0.13
+  enabled: false
+  broker:
   port: 1883
   username:
   password:
-  topic: tele/wt32-eth01_DE2250/SENSOR
+  topic:
   topic_prefix: tv-converter
-  json_path: ZPA.Power_curr
+  json_path:
   pause_watt: 0
   resume_watt: 50
   timeout_seconds: 30
 
 tvheadend:
-  enabled: true
-  url: http://192.168.0.33:9981
+  enabled: false
+  url:
 
   authentication:
     type: persistent_auth       # basic | persistent_auth
