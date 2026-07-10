@@ -1,220 +1,102 @@
-# tv-converter v2.2.0
+# tv-converter v2.3.0
 
-`tv-converter` converts or migrates MythTV and TVHeadend recordings and imports
-results into TVHeadend.
+`tv-converter` converts recordings from MythTV or TVHeadend and imports the
+result into TVHeadend.
 
-Version 2.0.0 introduced Debian packages and tag-based GitHub releases. Runtime
-behaviour is based on v1.3.3.
+## Source handling
 
-## Debian installation
+The source type determines how new recordings are detected automatically:
 
-Download the `.deb` file from the matching GitHub release and install it:
+- `source.type: mythtv` uses the configured MythTV database polling interval.
+- `source.type: tvheadend` listens to `ws(s)://<host>/comet/ws` and rescans the
+  finished DVR entries after relevant `dvrentry`, `subscriptions`, or
+  `connections` notifications.
 
-```bash
-sudo apt install ./tv-converter_2.2.0_all.deb
-```
+WebSocket notifications are only wake-up signals. Events received during a
+conversion are coalesced into one pending source scan and processed after the
+current recording has completed its import and postprocessing flow.
 
-During interactive installation, Debian asks for the systemd service user and
-group. Both default to `tvc`. When these defaults are selected, the package
-creates the missing system user and group automatically.
+## Processing flow
 
-For unattended installation, the defaults are used unless debconf was
-preseeded.
+Each recording is completed before the next one starts:
 
-## Installed paths
+1. Wait until TVHeadend has no active recordings and no active subscriptions.
+2. Transcode one recording.
+3. Wait until TVHeadend is idle again.
+4. Update the destination TVHeadend instance.
+5. Refresh Plex when configured.
+6. Delete the source only when `delete_source_after_import` is enabled and all
+   preceding steps succeeded.
 
-```text
-/etc/tv-converter/config.yaml
+When the TVHeadend source and destination URLs refer to the same instance,
+`/api/dvr/entry/filemoved` updates the existing DVR entry. Otherwise a new DVR
+entry is created with `/api/dvr/entry/create`.
 
-/var/lib/tv-converter/
-├── config.yaml.example
-├── main.py
-├── requirements.txt
-├── sources/
-├── systemd/
-├── venv/
-├── queue/
-├── state/
-└── cache/
-```
+## Configuration
 
-The package ships `config.yaml.example` below `/var/lib/tv-converter`. During
-installation, it is copied to `/etc/tv-converter/config.yaml` only if the active
-configuration does not exist. Package upgrades therefore preserve the existing
-configuration.
-
-## First start
-
-Edit the generated configuration:
-
-```bash
-sudo editor /etc/tv-converter/config.yaml
-```
-
-Then start the service:
-
-```bash
-sudo systemctl start tv-converter.service
-sudo systemctl status tv-converter.service
-```
-
-The package enables the service but does not start it automatically during the
-first installation.
-
-Reload the configuration between recordings:
-
-```bash
-sudo systemctl reload tv-converter.service
-```
-
-Follow the journal:
-
-```bash
-journalctl -u tv-converter.service -f
-```
-
-## Changing the service user or group
-
-Run the Debian configuration dialog again:
-
-```bash
-sudo dpkg-reconfigure tv-converter
-```
-
-The package regenerates `/etc/systemd/system/tv-converter.service` with the
-selected `User=` and `Group=` values.
-
-A custom user and group must already exist. Only the default `tvc` account and
-group are created automatically.
-
-The service account must have access to the configured recording directories
-and, for hardware encoding, to the required `/dev/dri` device. Add it to groups
-such as `video` or `render` when required.
-
-## Building locally
-
-```bash
-./packaging/build-deb.sh 2.2.0
-```
-
-The package is written to:
-
-```text
-dist/tv-converter_2.2.0_all.deb
-```
-
-## GitHub release workflow
-
-Pushing a version tag builds and publishes the Debian package, source archive,
-and checksums:
-
-```bash
-git tag v2.2.0
-git push origin v2.2.0
-```
-
-The release contains:
-
-```text
-tv-converter_2.2.0_all.deb
-tv-converter-2.2.0.zip
-SHA256SUMS
-```
-
-
-## MKV metadata
-
-Every MKV created by `tv-converter` contains container metadata. The metadata
-is always enabled and does not require configuration.
-
-The following tags are written:
-
-- `title`: recording title
-- `summary`: subtitle or episode title
-- `description`: full programme description
-- `network`: channel name
-- `date`: recording date in `YYYY-MM-DD` format
-- `comment`: `Imported by tv-converter`
-- `encoded_by`: `tv-converter` including its version
-- `encoder`: selected encoder (`hevc_vaapi`, `hevc_qsv`, `libx265`, or `copy`)
-- `profile`: selected encoding profile, such as `hd` or `sd`
-
-`encoder.type: none` now performs a stream-copy remux into MKV instead of a
-filesystem copy. Video and audio are not re-encoded, but the output receives the
-same metadata as transcoded recordings.
-
-Inspect the tags with:
-
-```bash
-ffprobe -v error -show_entries format_tags output.mkv
-```
-
-
-## HTTP wakeup
-
-`tv-converter` can rescan its configured source immediately after an authenticated
-HTTP request. This is intended for a TVHeadend post-recording command when
-TVHeadend and `tv-converter` run on different hosts.
-
-Configure the listener:
+The application distinguishes source and destination explicitly:
 
 ```yaml
-service:
-  poll_interval: 0
+source:
+  type: tvheadend
+  tvheadend:
+    url: http://192.168.0.33:9981
+    authentication:
+      type: basic
+      username: tv-converter
+      password: secret
+      auth_code:
 
-http:
-  enabled: true
-  bind: 0.0.0.0
-  allow: 192.168.0.0/24
-  port: 8080
-  token: "replace-with-a-long-random-token"
+destination:
+  type: tvheadend
+  tvheadend:
+    enabled: true
+    url: http://192.168.0.33:9981
+    authentication:
+      type: basic
+      username: tv-converter
+      password: secret
+      auth_code:
+    output:
+      directory: /media/storage0/tvheadend/imported
+    delete_source_after_import: false
 ```
 
-`service.poll_interval` controls periodic source scans:
+Persistent authentication remains supported by the client. Some administrative
+TVHeadend endpoints, including status and `filemoved`, may require Basic Auth
+with sufficient privileges on TVHeadend 4.3.
 
-- a value greater than `0` keeps periodic polling enabled; HTTP wakeups can also
-  trigger an immediate scan
-- `0` disables periodic polling; the service waits for a valid HTTP wakeup after
-  the initial source scan
+For the complete configuration, see `config.yaml.example`.
 
-The HTTP settings have the following meaning:
+## systemd
 
-- `bind`: local IPv4 or IPv6 address on which the server listens
-- `allow`: allowed client IP or CIDR network; `0.0.0.0` and `0.0.0.0/0` allow
-  every IPv4 client
-- `port`: TCP port of the listener
-- `token`: required secret sent in the `X-TV-Converter-Token` header
-
-The listener accepts only `POST /ping`. A valid request sets an internal wakeup
-event; it does not pass recording metadata and does not start a second converter
-process.
-
-Example TVHeadend post-recording command:
+The Debian service reads `/etc/tv-converter/config.yaml`. Use an override for a
+different user, group, or configuration path:
 
 ```bash
-curl --fail --silent --show-error \
-  --request POST \
-  --header 'X-TV-Converter-Token: replace-with-a-long-random-token' \
-  http://192.168.0.40:8080/ping
+sudo systemctl edit tv-converter
 ```
 
-Responses:
+Example:
 
-- `200 OK`: wakeup accepted
-- `401 Unauthorized`: token missing or invalid
-- `403 Forbidden`: client address is outside `http.allow`
-- `404 Not Found`: unknown endpoint
-- `405 Method Not Allowed`: `/ping` called without `POST`
-
-Generate a token, for example, with:
-
-```bash
-openssl rand -hex 32
+```ini
+[Service]
+User=plex
+Group=plex
+ExecStart=
+ExecStart=/var/lib/tv-converter/venv/bin/python /var/lib/tv-converter/main.py --config /home/plex/.config/tv-converter/config.yaml
 ```
 
-A configuration reload also reloads the HTTP listener. Changes to `bind`,
-`allow`, `port`, or `token` therefore take effect after:
+Then reload and restart:
 
 ```bash
-sudo systemctl reload tv-converter.service
+sudo systemctl daemon-reload
+sudo systemctl restart tv-converter
+```
+
+## Tests
+
+```bash
+python3 -m compileall -q .
+python3 -m unittest discover -s tests -v
 ```

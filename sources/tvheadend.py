@@ -2,17 +2,35 @@ from __future__ import annotations
 
 from datetime import datetime
 from pathlib import Path
+import threading
 from typing import Any
 
 from models import Recording
 from sources.base import RecordingSource
 from tvheadend_client import TVHeadendClient
+from tvheadend_events import TVHeadendEventListener
 
 
 class TVHeadendSource(RecordingSource):
     def __init__(self, config: dict):
         self.config = config
         self.client = TVHeadendClient(config)
+        self.events = TVHeadendEventListener(config["url"])
+
+    def start(self) -> None:
+        self.events.start()
+
+    def stop(self) -> None:
+        self.events.stop()
+
+    def wait_for_changes(self, control_event: threading.Event) -> bool:
+        return self.events.wait(control_event)
+
+    def changes_pending(self) -> bool:
+        return self.events.changes_pending()
+
+    def mark_scanned(self) -> None:
+        self.events.mark_scanned()
 
     def get_recordings(self) -> list[Recording]:
         response = self.client.get(

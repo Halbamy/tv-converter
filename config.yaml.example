@@ -1,33 +1,48 @@
 source:
+  # mythtv | tvheadend
   type: mythtv
 
   mythtv:
-    host:
+    host: 192.168.0.27
     user: mythtv
-    password: mythtv
+    password:
     database: mythconverg
-
-    output:
-      directory:
-
-    delete_after_import: false
+    poll_interval: 300
 
   tvheadend:
-    url:
+    url: http://192.168.0.33:9981
 
     authentication:
-      type: persistent_auth     # basic | persistent_auth
+      type: basic              # basic | persistent_auth
+      username:
+      password:
+      auth_code:
+
+destination:
+  type: tvheadend
+
+  tvheadend:
+    enabled: true
+    url: http://192.168.0.33:9981
+
+    authentication:
+      type: basic              # basic | persistent_auth
       username:
       password:
       auth_code:
 
     output:
-      directory: original
+      directory: /media/storage0/tvheadend/imported
 
-    delete_after_import: false
+    delete_source_after_import: false
+    comment: imported by tv-converter
+
+    channel_mapping:
+      # "ZDF HD": "ZDF"
+      # "Das Erste HD": "Das Erste HD"
 
 encoder:
-  type: auto
+  type: auto                  # auto | sw | qsv | vaapi | none
   copy_hevc: true
   audio_quality: "2"
 
@@ -55,18 +70,6 @@ profiles:
     qsv_global_quality: 24
     vaapi_qp: 25
 
-service:
-  # Seconds between source scans. Set to 0 to disable periodic polling and
-  # process new recordings only after a successful HTTP /ping request.
-  poll_interval: 300
-
-http:
-  enabled: false
-  bind: 0.0.0.0
-  allow: 192.168.0.0/24
-  port: 8080
-  token:
-
 mqtt:
   enabled: false
   broker:
@@ -79,26 +82,6 @@ mqtt:
   pause_watt: 0
   resume_watt: 50
   timeout_seconds: 30
-
-tvheadend:
-  enabled: false
-  url:
-
-  authentication:
-    type: persistent_auth       # basic | persistent_auth
-    username:
-    password:
-    auth_code:
-
-  comment: imported by tv-converter
-
-  idle:
-    enabled: true
-    poll_interval: 300
-
-  channel_mapping:
-    # "ZDF HD": "ZDF"
-    # "Das Erste HD": "Das Erste HD"
 
 postprocessing:
   plex:

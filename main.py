@@ -4,17 +4,15 @@ from __future__ import annotations
 import argparse
 import signal
 import threading
-from pathlib import Path
 
-from config import load_config, source_config
+from config import destination_config, load_config, source_config
 from converter import Converter
 from event_logger import configure_logging, logger
-from http_wakeup import HTTPWakeupService
 from mqtt_controller import MQTTController, ServiceControl
 from postprocessing import PlexPostprocessor
 from recording_queue import RecordingQueue
 from sources import create_source
-from tvheadend import TVHeadendIdleMonitor, TvheadendImporter
+from tvheadend import TVHeadendImporter, TVHeadendStateMonitor
 
 
 def filter_recordings(recordings, cfg):
@@ -44,35 +42,45 @@ class App:
         self.config_path = config_path
         self.config = load_config(config_path)
         self.control = ServiceControl()
-        self.wakeup_event = threading.Event()
+        self.control_event = threading.Event()
         self.queue = RecordingQueue()
+        self.source = create_source(self.config)
         self.mqtt = MQTTController(self.config.get("mqtt", {}), lambda: None, self.control)
         self.converter: Converter | None = None
-        self.tvheadend = TvheadendImporter(self.config.get("tvheadend", {}))
-        self.idle = TVHeadendIdleMonitor(self.config.get("tvheadend", {}))
+        self._configure_components()
+
+    def _configure_components(self) -> None:
+        source_cfg = source_config(self.config)
+        destination_cfg = destination_config(self.config)
+        source_type = self.config["source"].get("type", "mythtv")
+        monitor_cfg = source_cfg if source_type == "tvheadend" else destination_cfg
+
+        self.tvheadend = TVHeadendImporter(
+            destination_cfg,
+            source_cfg if source_type == "tvheadend" else None,
+        )
+        self.state_monitor = TVHeadendStateMonitor(monitor_cfg)
         self.plex = PlexPostprocessor(self.config.get("postprocessing", {}))
-        self.http_wakeup = HTTPWakeupService(self.config.get("http", {}), self.wakeup_event)
 
     def request_reload(self, signum=None, frame=None) -> None:
         logger.info("Reload requested.")
         self.control.reload_requested = True
-        self.wakeup_event.set()
+        self.control_event.set()
 
     def reload(self) -> None:
         logger.info("Reloading configuration.")
-        new_config = load_config(self.config_path)
-        self.http_wakeup.stop()
-        self.config = new_config
+        self.source.stop()
+        self.config = load_config(self.config_path)
+        self.source = create_source(self.config)
+        self._configure_components()
         self.control.reload_requested = False
-        self.tvheadend = TvheadendImporter(self.config.get("tvheadend", {}))
-        self.idle = TVHeadendIdleMonitor(self.config.get("tvheadend", {}))
-        self.plex = PlexPostprocessor(self.config.get("postprocessing", {}))
-        self.http_wakeup = HTTPWakeupService(self.config.get("http", {}), self.wakeup_event)
-        self.http_wakeup.start()
+        self.control_event.clear()
+        self.source.start()
 
     def stop(self, signum=None, frame=None) -> None:
         self.control.stop_requested = True
-        self.wakeup_event.set()
+        self.control_event.set()
+        self.source.stop()
 
         if self.converter is not None:
             self.converter.runner.terminate()
@@ -85,106 +93,105 @@ class App:
         self.converter = Converter(self.config, self.mqtt)
         self.mqtt.process_getter = lambda: self.converter.runner.process
         self.mqtt.start()
-        self.http_wakeup.start()
+        self.source.start()
 
         try:
+            self._scan_source()
+
             while not self.control.stop_requested:
                 if self.control.reload_requested:
                     self.reload()
+                    self._scan_source()
 
                 if len(self.queue) == 0:
-                    source = create_source(self.config)
-                    recordings = filter_recordings(source.get_recordings(), self.config)
-                    added = self.queue.add_new(recordings)
-                    logger.info("%s new recording(s) found.", added)
+                    self.mqtt.publish_runtime_status(
+                        state="idle",
+                        progress=0,
+                        queue={"current": 0, "total": 0},
+                    )
 
-                    if added == 0:
-                        self.mqtt.publish_runtime_status(state="idle", progress=0, queue={"current": 0, "total": 0})
-                        self._wait_for_wakeup()
+                    if not self.source.wait_for_changes(self.control_event):
                         continue
 
-                self._process_queue(dry_run, show_ffmpeg, show_tvh_json)
+                    self._scan_source()
+                    continue
+
+                self._process_next(dry_run, show_ffmpeg, show_tvh_json)
+
+                if self.source.changes_pending():
+                    self._scan_source()
         finally:
-            self.http_wakeup.stop()
+            self.source.stop()
             self.mqtt.stop()
 
-    def _process_queue(self, dry_run: bool, show_ffmpeg: bool, show_tvh_json: bool) -> None:
+    def _scan_source(self) -> None:
+        # Clear the previous notification before scanning so an event arriving
+        # during the REST/database query remains pending for the next scan.
+        self.source.mark_scanned()
+        recordings = filter_recordings(self.source.get_recordings(), self.config)
+        added = self.queue.add_new(recordings)
+        logger.info("%s new recording(s) found.", added)
+
+    def _process_next(self, dry_run: bool, show_ffmpeg: bool, show_tvh_json: bool) -> None:
         total = len(self.queue)
-        index = 0
-        changed_files = False
-        converted_for_delete = []
+        recording = self.queue.pop()
 
-        while len(self.queue) > 0 and not self.control.stop_requested:
-            index += 1
-            recording = self.queue.pop()
+        if recording is None:
+            return
 
-            if recording is None:
-                return
+        if getattr(recording, "deletepending", False):
+            logger.info("Skipping deletepending recording: %s", recording.title)
+            return
 
-            if getattr(recording, "deletepending", False):
-                logger.info(
-                    "Skipping deletepending recording before processing: %s",
-                    recording.title,
-                )
-                continue
+        assert self.converter is not None
+        plan = self.converter.prepare(recording)
 
-            assert self.converter is not None
-            plan = self.converter.prepare(recording)
+        if dry_run:
+            self._print_plan(recording, plan, 1, total, show_ffmpeg, show_tvh_json)
+            return
 
-            if dry_run:
-                self._print_plan(recording, plan, index, total, show_ffmpeg, show_tvh_json)
-                continue
+        self.state_monitor.wait_until_not_busy()
 
-            self.idle.wait_until_idle()
+        try:
+            converted = self.converter.convert(recording, 1, total)
+        except RuntimeError as exc:
+            logger.error("%s", exc)
+            self.control.stop_requested = True
+            return
 
-            try:
-                converted = self.converter.convert(recording, index, total)
-            except RuntimeError as exc:
-                logger.error("%s", exc)
-                self.control.stop_requested = True
-                return
+        self.state_monitor.wait_until_not_busy()
+        import_ok = self.tvheadend.import_recording(recording, converted)
 
-            self.idle.wait_until_idle()
-            import_ok = self.tvheadend.import_recording(recording, converted)
-
-            if not import_ok:
-                logger.info(
-                    "TVHeadend import skipped or failed; postprocessing disabled for: %s",
-                    recording.title,
-                )
-                continue
-
-            changed_files = True
-            converted_for_delete.append(converted)
-
-            if show_tvh_json:
-                print(self.tvheadend.build_json(recording, converted))
-
-            self.mqtt.publish_runtime_status(
-                state="finished",
-                source=recording.source,
-                encoder=converted.encoder_name,
-                current_file=converted.output_file.name,
-                fullpath=str(converted.output_file),
-                current_title=recording.title,
-                progress=100,
-                eta="00:00",
-                queue={"current": index, "total": total},
+        if not import_ok:
+            logger.info(
+                "TVHeadend import skipped or failed; postprocessing disabled for: %s",
+                recording.title,
             )
+            return
 
-        if changed_files and not dry_run:
-            self.idle.wait_until_idle()
-            plex_ok = self.plex.refresh()
+        if show_tvh_json:
+            print(self.tvheadend.build_json(recording, converted))
 
-            if plex_ok:
-                self.idle.wait_until_idle()
-                for converted in converted_for_delete:
-                    self._delete_source_if_configured(converted)
-            else:
-                logger.error("Plex refresh failed. Source files will not be deleted.")
+        plex_ok = self.plex.refresh()
+        if not plex_ok:
+            logger.error("Plex refresh failed. Source file will not be deleted.")
+            return
+
+        self._delete_source_if_configured(converted)
+        self.mqtt.publish_runtime_status(
+            state="finished",
+            source=recording.source,
+            encoder=converted.encoder_name,
+            current_file=converted.output_file.name,
+            fullpath=str(converted.output_file),
+            current_title=recording.title,
+            progress=100,
+            eta="00:00",
+            queue={"current": 1, "total": total},
+        )
 
     def _delete_source_if_configured(self, converted) -> None:
-        src_cfg = source_config(self.config)
+        dst_cfg = destination_config(self.config)
 
         if getattr(converted.source, "deletepending", False):
             logger.info(
@@ -193,7 +200,7 @@ class App:
             )
             return
 
-        if not bool(src_cfg.get("delete_after_import", False)):
+        if not bool(dst_cfg.get("delete_source_after_import", False)):
             return
 
         source = converted.source.filename
@@ -210,7 +217,15 @@ class App:
         source.unlink()
         logger.info("Deleted source file: %s", source)
 
-    def _print_plan(self, recording, plan, index: int, total: int, show_ffmpeg: bool, show_tvh_json: bool) -> None:
+    def _print_plan(
+        self,
+        recording,
+        plan,
+        index: int,
+        total: int,
+        show_ffmpeg: bool,
+        show_tvh_json: bool,
+    ) -> None:
         print("-" * 60)
         print(f"[{index}/{total}] [{recording.source}] {recording.starttime} | {recording.title}")
         print(f"Input: {recording.filename}")
@@ -220,7 +235,10 @@ class App:
             print("Mode: none (copy without transcoding)")
         else:
             print(f"Temp: {plan.temp_file}")
-            print(f"Video: {plan.media.video_codec} {plan.media.width}x{plan.media.height} -> {plan.encoder_name}")
+            print(
+                f"Video: {plan.media.video_codec} "
+                f"{plan.media.width}x{plan.media.height} -> {plan.encoder_name}"
+            )
             print(f"Audio: stream {plan.media.audio_stream_index} {plan.media.audio_codec}")
             print(f"Profile: {plan.media.profile.name}")
 
@@ -240,20 +258,8 @@ class App:
                 encoder_name=plan.encoder_name,
                 profile_name=plan.media.profile.name,
             )
-            print("Tvheadend JSON:")
+            print("TVHeadend JSON:")
             print(self.tvheadend.build_json(recording, dummy))
-
-    def _wait_for_wakeup(self) -> None:
-        interval = int(self.config.get("service", {}).get("poll_interval", 300))
-
-        if interval == 0:
-            logger.info("Polling disabled; waiting for HTTP wakeup.")
-            triggered = self.wakeup_event.wait()
-        else:
-            triggered = self.wakeup_event.wait(timeout=interval)
-
-        if triggered:
-            self.wakeup_event.clear()
 
 
 def main():

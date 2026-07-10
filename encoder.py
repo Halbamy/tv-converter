@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 import subprocess
 
-from config import is_verbose, source_config
+from config import destination_config, is_verbose
 from ffprobe_utils import media_info
 from filename_utils import build_output_filename
 from models import EncodingPlan, MediaInfo, Recording, VERSION
@@ -18,7 +18,7 @@ class Encoder:
         return "sw" if encoder in {"software", "libx265"} else encoder
 
     def output_directory(self, recording: Recording) -> Path:
-        output_dir = source_config(self.config)["output"]["directory"]
+        output_dir = destination_config(self.config)["output"]["directory"]
 
         if output_dir == "original":
             return recording.filename.parent

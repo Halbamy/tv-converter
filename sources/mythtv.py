@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import threading
 
 import mysql.connector
 
@@ -35,6 +36,11 @@ ORDER BY r.starttime ASC
 class MythTVSource(RecordingSource):
     def __init__(self, config: dict):
         self.config = config
+        self.poll_interval = int(config.get("poll_interval", 300))
+
+
+    def wait_for_changes(self, control_event: threading.Event) -> bool:
+        return not control_event.wait(timeout=self.poll_interval)
 
     def get_recordings(self) -> list[Recording]:
         conn = mysql.connector.connect(

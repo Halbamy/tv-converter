@@ -2,44 +2,58 @@ from __future__ import annotations
 
 import json
 import time
+from urllib.parse import urlsplit, urlunsplit
 
 from event_logger import logger
 from models import ConvertedRecording, Recording
 from tvheadend_client import TVHeadendClient
 
 
-class TVHeadendIdleMonitor:
-    def __init__(self, config: dict):
+class TVHeadendStateMonitor:
+    def __init__(self, config: dict, poll_interval: int = 300):
         self.config = config or {}
-        idle = self.config.get("idle", {})
-        self.enabled = bool(idle.get("enabled", True))
-        self.poll_interval = int(idle.get("poll_interval", 300))
+        self.poll_interval = poll_interval
         self.client = TVHeadendClient(config)
 
-    def wait_until_idle(self) -> None:
-        if not self.enabled:
-            return
+    def wait_until_not_busy(self) -> None:
+        while True:
+            recordings, subscriptions = self.busy_counts()
 
-        while not self.is_idle():
-            logger.info("TVHeadend is busy, waiting %s seconds.", self.poll_interval)
+            if recordings == 0 and subscriptions == 0:
+                return
+
+            logger.info(
+                "TVHeadend busy (recordings=%s, subscriptions=%s), waiting %s seconds.",
+                recordings,
+                subscriptions,
+                self.poll_interval,
+            )
             time.sleep(self.poll_interval)
 
-    def is_idle(self) -> bool:
-        return not self.has_active_subscriptions()
-    def has_active_subscriptions(self) -> bool:
-        data = self._get_json("/api/status/subscriptions", {})
+    def busy_counts(self) -> tuple[int, int]:
+        recordings = self._active_recording_count()
+        subscriptions = self._active_subscription_count()
+        return recordings, subscriptions
+
+    def _active_recording_count(self) -> int:
+        data = self._get_json(
+            "/api/dvr/entry/grid_upcoming",
+            {"limit": 999999},
+        )
+        count = 0
 
         for entry in data.get("entries", []):
-            service = str(entry.get("service", "")).lower()
-            title = str(entry.get("title", "")).lower()
+            status = str(entry.get("status", "")).strip().lower()
+            sched_status = str(entry.get("sched_status", "")).strip().lower()
 
-            if "dvr" in service or "dvr" in title:
-                return True
+            if status == "recording" or sched_status == "recording":
+                count += 1
 
-            if entry.get("username") or entry.get("hostname"):
-                return True
+        return count
 
-        return False
+    def _active_subscription_count(self) -> int:
+        data = self._get_json("/api/status/subscriptions", {})
+        return len(data.get("entries", []))
 
     def _get_json(self, path: str, params: dict) -> dict:
         try:
@@ -47,14 +61,15 @@ class TVHeadendIdleMonitor:
             response.raise_for_status()
             return response.json()
         except Exception as exc:
-            logger.warning("TVHeadend idle check failed: %s", exc)
+            logger.warning("TVHeadend state check failed for %s: %s", path, exc)
             return {"entries": [{"busy": True}]}
 
 
-class TvheadendImporter:
-    def __init__(self, config: dict):
+class TVHeadendImporter:
+    def __init__(self, config: dict, source_config: dict | None = None):
         self.config = config or {}
-        self.enabled = bool(self.config.get("enabled", False))
+        self.source_config = source_config or {}
+        self.enabled = bool(self.config.get("enabled", True))
         self.client = TVHeadendClient(config)
 
     def channel_name(self, recording: Recording) -> str:
@@ -91,6 +106,9 @@ class TvheadendImporter:
         if not self.enabled:
             return True
 
+        if recording.source == "tvheadend" and self._same_instance():
+            return self._file_moved(recording, converted)
+
         response = self.client.post(
             "/api/dvr/entry/create",
             data={"conf": json.dumps(self.build_dict(recording, converted), ensure_ascii=False)},
@@ -98,5 +116,39 @@ class TvheadendImporter:
         )
         response.raise_for_status()
         logger.info("Imported into TVHeadend: %s", converted.output_file.name)
-
         return True
+
+    def _file_moved(self, recording: Recording, converted: ConvertedRecording) -> bool:
+        response = self.client.post(
+            "/api/dvr/entry/filemoved",
+            data={"src": str(recording.filename), "dst": str(converted.output_file)},
+            timeout=30,
+        )
+        response.raise_for_status()
+        logger.info(
+            "Updated TVHeadend recording path: %s -> %s",
+            recording.filename,
+            converted.output_file,
+        )
+        return True
+
+    def _same_instance(self) -> bool:
+        source_url = self.source_config.get("url")
+        destination_url = self.config.get("url")
+
+        if not source_url or not destination_url:
+            return False
+
+        return self._normalize_url(source_url) == self._normalize_url(destination_url)
+
+    @staticmethod
+    def _normalize_url(url: str) -> str:
+        parsed = urlsplit(url.strip())
+        scheme = parsed.scheme.lower()
+        hostname = (parsed.hostname or "").lower()
+        port = parsed.port
+
+        if port is None:
+            port = 443 if scheme == "https" else 80
+
+        return urlunsplit((scheme, f"{hostname}:{port}", parsed.path.rstrip("/"), "", ""))

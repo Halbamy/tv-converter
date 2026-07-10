@@ -5,7 +5,7 @@ from datetime import datetime
 from pathlib import Path
 
 
-VERSION = "2.2.0"
+VERSION = "2.3.0"
 
 
 @dataclass(frozen=True)

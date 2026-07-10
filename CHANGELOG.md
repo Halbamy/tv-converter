@@ -1,71 +1,56 @@
 # Changelog
 
-All notable changes to this project are documented in this file.
+## [2.3.0]
+
+### Added
+
+- Automatic TVHeadend source notifications through the `/comet/ws` WebSocket.
+- Automatic reconnection after a TVHeadend WebSocket disconnect.
+- Automatic `/api/dvr/entry/filemoved` use when source and destination refer to
+  the same TVHeadend instance.
+- Source-specific change detection: MythTV polling and TVHeadend events.
+
+### Changed
+
+- Each recording is now transcoded, imported, postprocessed, and optionally
+  deleted before the next queue item starts.
+- TVHeadend busy checks run before transcoding and again before import.
+- Relevant WebSocket events received during transcoding are coalesced and cause
+  one source rescan after the current recording is completed.
+- Removed the HTTP wakeup server and post-record hook workflow.
+
+### Configuration changes
+
+The configuration layout is not backward compatible with 2.2.x:
+
+- `source.<type>.output.directory` moved to
+  `destination.tvheadend.output.directory`.
+- `source.<type>.delete_after_import` was replaced by
+  `destination.tvheadend.delete_source_after_import`.
+- The former top-level `tvheadend` destination section moved to
+  `destination.tvheadend`.
+- `service.poll_interval` moved to `source.mythtv.poll_interval` and now applies
+  only to MythTV sources.
+- The complete `http` section was removed. TVHeadend sources now use the
+  WebSocket automatically and require no wakeup configuration.
+
+Existing `/etc/tv-converter/config.yaml` files must be migrated manually using
+`config.yaml.example` before starting version 2.3.0.
 
 ## [2.2.0]
 
 ### Added
 
-- Authenticated HTTP wakeup endpoint `POST /ping` for event-driven source scans.
-- Client address filtering with IPv4 or IPv6 addresses and CIDR networks.
-- HTTP listener reload through the existing systemd configuration reload.
-
-### Changed
-
-- `service.poll_interval: 0` now disables periodic polling. After the initial
-  source scan, the service waits for a valid HTTP wakeup.
-
-### Configuration changes ⚠️
-
-Add the optional HTTP wakeup section:
-
-```yaml
-http:
-  enabled: false
-  bind: 0.0.0.0
-  allow: 192.168.0.0/24
-  port: 8080
-  token:
-```
-
-When `http.enabled` is `true`, `http.token` must be set. Setting
-`service.poll_interval` to `0` also requires the HTTP wakeup service to be
-enabled, otherwise configuration validation fails.
+- Authenticated HTTP wakeup endpoint.
 
 ## [2.1.0]
 
 ### Added
 
-- MKV container metadata for title, summary, description, channel, recording
-  date, converter version, encoder, and encoding profile.
-
-### Changed
-
-- `encoder.type: none` now uses an FFmpeg stream-copy remux to MKV so metadata
-  is written without re-encoding video or audio.
-
-## [2.0.1]
-
-### Fixed
-
-- TVHeadend idle detection now uses only active subscriptions and no longer
-  treats scheduled recordings as active.
+- MKV metadata.
 
 ## [2.0.0]
 
 ### Added
 
-- Debian package build with an application-owned Python virtual environment.
-- Tag-triggered GitHub Actions release workflow.
-- Automatic `.deb`, source ZIP, and `SHA256SUMS` release artifacts.
-- Configurable systemd service user and group through debconf.
-- Default system account and group `tvc` when no custom values are selected.
-
-### Changed
-
-- Application files and the virtual environment are installed below
-  `/var/lib/tv-converter`.
-- The active configuration is stored at `/etc/tv-converter/config.yaml`.
-- `config.yaml.example` is shipped below `/var/lib/tv-converter` and copied to
-  `/etc/tv-converter/config.yaml` only when no active configuration exists.
-
+- Debian packaging and automated GitHub releases.
