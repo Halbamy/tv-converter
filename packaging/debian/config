@@ -1,0 +1,8 @@
+#!/bin/sh
+set -e
+
+. /usr/share/debconf/confmodule
+
+db_input medium tv-converter/service-user || true
+db_input medium tv-converter/service-group || true
+db_go || true

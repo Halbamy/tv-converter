@@ -1,0 +1,74 @@
+#!/bin/sh
+set -e
+
+. /usr/share/debconf/confmodule
+
+db_get tv-converter/service-user
+SERVICE_USER="${RET:-tvc}"
+db_get tv-converter/service-group
+SERVICE_GROUP="${RET:-tvc}"
+
+if [ "$SERVICE_GROUP" = "tvc" ]; then
+    if ! getent group tvc >/dev/null 2>&1; then
+        addgroup --system tvc
+    fi
+elif ! getent group "$SERVICE_GROUP" >/dev/null 2>&1; then
+    echo "Configured service group does not exist: $SERVICE_GROUP" >&2
+    exit 1
+fi
+
+if [ "$SERVICE_USER" = "tvc" ]; then
+    if ! getent passwd tvc >/dev/null 2>&1; then
+        adduser \
+            --system \
+            --ingroup "$SERVICE_GROUP" \
+            --home /var/lib/tv-converter \
+            --no-create-home \
+            --disabled-login \
+            tvc
+    fi
+elif ! getent passwd "$SERVICE_USER" >/dev/null 2>&1; then
+    echo "Configured service user does not exist: $SERVICE_USER" >&2
+    exit 1
+fi
+
+install -d -m 0755 /etc/tv-converter
+if [ ! -f /etc/tv-converter/config.yaml ]; then
+    install -m 0640 \
+        /var/lib/tv-converter/config.yaml.example \
+        /etc/tv-converter/config.yaml
+fi
+chown root:"$SERVICE_GROUP" /etc/tv-converter/config.yaml
+chmod 0640 /etc/tv-converter/config.yaml
+
+install -d -o "$SERVICE_USER" -g "$SERVICE_GROUP" -m 0750 \
+    /var/lib/tv-converter/queue \
+    /var/lib/tv-converter/state \
+    /var/lib/tv-converter/cache
+
+if [ ! -x /var/lib/tv-converter/venv/bin/python ]; then
+    python3 -m venv /var/lib/tv-converter/venv
+fi
+
+/var/lib/tv-converter/venv/bin/python -m pip install \
+    --disable-pip-version-check \
+    --requirement /var/lib/tv-converter/requirements.txt
+
+sed \
+    -e "s/@SERVICE_USER@/$SERVICE_USER/g" \
+    -e "s/@SERVICE_GROUP@/$SERVICE_GROUP/g" \
+    /var/lib/tv-converter/systemd/tv-converter.service.in \
+    > /etc/systemd/system/tv-converter.service
+chmod 0644 /etc/systemd/system/tv-converter.service
+
+if command -v systemctl >/dev/null 2>&1; then
+    systemctl daemon-reload || true
+    systemctl enable tv-converter.service || true
+
+    if systemctl is-active --quiet tv-converter.service; then
+        systemctl restart tv-converter.service || true
+    fi
+fi
+
+db_stop
+exit 0

@@ -1,0 +1,18 @@
+#!/bin/sh
+set -e
+
+case "$1" in
+    remove|purge)
+        rm -f /etc/systemd/system/tv-converter.service
+        if command -v systemctl >/dev/null 2>&1; then
+            systemctl daemon-reload || true
+        fi
+        ;;
+esac
+
+if [ "$1" = "purge" ]; then
+    rm -f /etc/tv-converter/config.yaml
+    rmdir /etc/tv-converter 2>/dev/null || true
+fi
+
+exit 0

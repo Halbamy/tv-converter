@@ -1,0 +1,13 @@
+Template: tv-converter/service-user
+Type: string
+Default: tvc
+Description: User account for the tv-converter service:
+ Enter an existing user account. If the default "tvc" is selected and the
+ account does not exist, the package creates it as a system user.
+
+Template: tv-converter/service-group
+Type: string
+Default: tvc
+Description: Group for the tv-converter service:
+ Enter an existing group. If the default "tvc" is selected and the group does
+ not exist, the package creates it as a system group.

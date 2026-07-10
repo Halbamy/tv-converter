@@ -1,0 +1,60 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install build tools
+        run: sudo apt-get update && sudo apt-get install -y dpkg-dev zip
+
+      - name: Determine version
+        id: version
+        shell: bash
+        run: echo "value=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Validate release version
+        shell: bash
+        run: |
+          source_version=$(sed -n 's/^VERSION = "\([^"]*\)"/\1/p' models.py)
+          test "$source_version" = "${{ steps.version.outputs.value }}"
+
+      - name: Validate Python sources
+        run: python3 -m compileall -q .
+
+      - name: Build Debian package
+        run: ./packaging/build-deb.sh "${{ steps.version.outputs.value }}"
+
+      - name: Build source archive
+        shell: bash
+        run: |
+          mkdir -p dist
+          git archive \
+            --format=zip \
+            --prefix="tv-converter-${{ steps.version.outputs.value }}/" \
+            -o "dist/tv-converter-${{ steps.version.outputs.value }}.zip" \
+            HEAD
+
+      - name: Generate checksums
+        working-directory: dist
+        run: sha256sum *.deb *.zip > SHA256SUMS
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            dist/*.deb
+            dist/*.zip
+            dist/SHA256SUMS

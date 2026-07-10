@@ -5,25 +5,20 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-
-WorkingDirectory=/home/plex/tv-converter
-
-ExecStart=/home/plex/tv-converter/venv/bin/python \
-    /home/plex/tv-converter/main.py \
-    --config /home/plex/tv-converter/config.yaml
-
+User=@SERVICE_USER@
+Group=@SERVICE_GROUP@
+WorkingDirectory=/var/lib/tv-converter
+ExecStart=/var/lib/tv-converter/venv/bin/python \
+    /var/lib/tv-converter/main.py \
+    --config /etc/tv-converter/config.yaml
 ExecReload=/bin/kill -HUP $MAINPID
-
 Restart=always
 RestartSec=10
-
 KillSignal=SIGTERM
 TimeoutStopSec=30
-
 Environment=PYTHONUNBUFFERED=1
-
 StandardOutput=journal
 StandardError=journal
 
 [Install]
-WantedBy=default.target
+WantedBy=multi-user.target
