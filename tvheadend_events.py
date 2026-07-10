@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import json
 import threading
-import time
+from typing import TYPE_CHECKING
 from urllib.parse import urlsplit, urlunsplit
 
-from websocket import WebSocketApp
-
 from event_logger import logger
+
+if TYPE_CHECKING:
+    from websocket import WebSocketApp
 
 
 class TVHeadendEventListener:
@@ -21,11 +22,20 @@ class TVHeadendEventListener:
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._socket: WebSocketApp | None = None
+        self._websocket_app_class: type[WebSocketApp] | None = None
 
     def start(self) -> None:
         if self._thread is not None and self._thread.is_alive():
             return
 
+        try:
+            from websocket import WebSocketApp
+        except ModuleNotFoundError as exc:
+            raise RuntimeError(
+                "TVHeadend event handling requires the websocket-client package."
+            ) from exc
+
+        self._websocket_app_class = WebSocketApp
         self._stop.clear()
         self._changed.set()
         self._thread = threading.Thread(
@@ -60,8 +70,10 @@ class TVHeadendEventListener:
         self._changed.clear()
 
     def _run(self) -> None:
+        assert self._websocket_app_class is not None
+
         while not self._stop.is_set():
-            self._socket = WebSocketApp(
+            self._socket = self._websocket_app_class(
                 self.url,
                 on_open=self._on_open,
                 on_message=self._on_message,
