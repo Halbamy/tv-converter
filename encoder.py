@@ -6,7 +6,7 @@ import subprocess
 from config import is_verbose, source_config
 from ffprobe_utils import media_info
 from filename_utils import build_output_filename
-from models import EncodingPlan, EncodingProfile, MediaInfo, Recording
+from models import EncodingPlan, MediaInfo, Recording, VERSION
 
 
 class Encoder:
@@ -174,30 +174,76 @@ class Encoder:
             "aresample=async=1",
         ]
 
-    def build_none_plan(self, recording: Recording) -> EncodingPlan:
-        suffix = recording.filename.suffix or ".ts"
-        output = self.output_filename(recording, suffix=suffix)
-        profile = EncodingProfile("none", "", 0, 0, 0)
-        media = MediaInfo(
-            duration_seconds=recording.duration_minutes * 60,
-            video_codec="copy",
-            width=0,
-            height=0,
-            audio_stream_index=-1,
-            audio_codec="copy",
-            audio_language="",
-            audio_reason="no transcoding",
-            video_copy=True,
-            audio_copy=True,
-            profile=profile,
-        )
-        return EncodingPlan([], media, output, None, "none")
+    def metadata_options(
+        self,
+        recording: Recording,
+        media: MediaInfo,
+        encoder_name: str,
+    ) -> list[str]:
+        return [
+            "-metadata",
+            f"title={recording.title}",
+            "-metadata",
+            f"summary={recording.subtitle}",
+            "-metadata",
+            f"description={recording.description}",
+            "-metadata",
+            f"network={recording.channel}",
+            "-metadata",
+            f"date={recording.starttime:%Y-%m-%d}",
+            "-metadata",
+            "comment=Imported by tv-converter",
+            "-metadata",
+            f"encoded_by=tv-converter {VERSION}",
+            "-metadata",
+            f"encoder={encoder_name}",
+            "-metadata",
+            f"profile={media.profile.name}",
+        ]
+
+    def build_none_plan(self, recording: Recording, media: MediaInfo) -> EncodingPlan:
+        output = self.output_filename(recording, suffix=".mkv")
+        temp = output.with_suffix(output.suffix + ".part")
+        encoder_name = "copy"
+        command = [
+            "ffmpeg",
+            "-hide_banner",
+            "-nostats",
+            "-loglevel",
+            "warning",
+            "-fflags",
+            "+genpts+discardcorrupt",
+            "-err_detect",
+            "ignore_err",
+            "-i",
+            str(recording.filename),
+            "-map",
+            "0:v:0",
+            "-map",
+            f"0:{media.audio_stream_index}",
+            "-c:v",
+            "copy",
+            "-c:a",
+            "copy",
+            "-metadata:s:a:0",
+            "language=deu",
+            *self.metadata_options(recording, media, encoder_name),
+            "-avoid_negative_ts",
+            "make_zero",
+            "-progress",
+            "pipe:1",
+            "-f",
+            "matroska",
+            str(temp),
+        ]
+        return EncodingPlan(command, media, output, temp, encoder_name)
 
     def build_plan(self, recording: Recording) -> EncodingPlan:
-        if self._encoder_type() == "none":
-            return self.build_none_plan(recording)
-
         media = media_info(recording.filename, self.config)
+
+        if self._encoder_type() == "none":
+            return self.build_none_plan(recording, media)
+
         output = self.output_filename(recording, suffix=".mkv")
         temp = output.with_suffix(output.suffix + ".part")
         video_opts, encoder_name = self.video_options(media)
@@ -225,6 +271,7 @@ class Encoder:
             *audio_opts,
             "-metadata:s:a:0",
             "language=deu",
+            *self.metadata_options(recording, media, encoder_name),
             "-avoid_negative_ts",
             "make_zero",
             "-progress",
