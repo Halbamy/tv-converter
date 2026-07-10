@@ -1,4 +1,4 @@
-# tv-converter v2.1.0
+# tv-converter v2.2.0
 
 `tv-converter` converts or migrates MythTV and TVHeadend recordings and imports
 results into TVHeadend.
@@ -11,7 +11,7 @@ behaviour is based on v1.3.3.
 Download the `.deb` file from the matching GitHub release and install it:
 
 ```bash
-sudo apt install ./tv-converter_2.1.0_all.deb
+sudo apt install ./tv-converter_2.2.0_all.deb
 ```
 
 During interactive installation, Debian asks for the systemd service user and
@@ -94,13 +94,13 @@ such as `video` or `render` when required.
 ## Building locally
 
 ```bash
-./packaging/build-deb.sh 2.1.0
+./packaging/build-deb.sh 2.2.0
 ```
 
 The package is written to:
 
 ```text
-dist/tv-converter_2.1.0_all.deb
+dist/tv-converter_2.2.0_all.deb
 ```
 
 ## GitHub release workflow
@@ -109,15 +109,15 @@ Pushing a version tag builds and publishes the Debian package, source archive,
 and checksums:
 
 ```bash
-git tag v2.1.0
-git push origin v2.1.0
+git tag v2.2.0
+git push origin v2.2.0
 ```
 
 The release contains:
 
 ```text
-tv-converter_2.1.0_all.deb
-tv-converter-2.1.0.zip
+tv-converter_2.2.0_all.deb
+tv-converter-2.2.0.zip
 SHA256SUMS
 ```
 
@@ -147,4 +147,74 @@ Inspect the tags with:
 
 ```bash
 ffprobe -v error -show_entries format_tags output.mkv
+```
+
+
+## HTTP wakeup
+
+`tv-converter` can rescan its configured source immediately after an authenticated
+HTTP request. This is intended for a TVHeadend post-recording command when
+TVHeadend and `tv-converter` run on different hosts.
+
+Configure the listener:
+
+```yaml
+service:
+  poll_interval: 0
+
+http:
+  enabled: true
+  bind: 0.0.0.0
+  allow: 192.168.0.0/24
+  port: 8080
+  token: "replace-with-a-long-random-token"
+```
+
+`service.poll_interval` controls periodic source scans:
+
+- a value greater than `0` keeps periodic polling enabled; HTTP wakeups can also
+  trigger an immediate scan
+- `0` disables periodic polling; the service waits for a valid HTTP wakeup after
+  the initial source scan
+
+The HTTP settings have the following meaning:
+
+- `bind`: local IPv4 or IPv6 address on which the server listens
+- `allow`: allowed client IP or CIDR network; `0.0.0.0` and `0.0.0.0/0` allow
+  every IPv4 client
+- `port`: TCP port of the listener
+- `token`: required secret sent in the `X-TV-Converter-Token` header
+
+The listener accepts only `POST /ping`. A valid request sets an internal wakeup
+event; it does not pass recording metadata and does not start a second converter
+process.
+
+Example TVHeadend post-recording command:
+
+```bash
+curl --fail --silent --show-error \
+  --request POST \
+  --header 'X-TV-Converter-Token: replace-with-a-long-random-token' \
+  http://192.168.0.40:8080/ping
+```
+
+Responses:
+
+- `200 OK`: wakeup accepted
+- `401 Unauthorized`: token missing or invalid
+- `403 Forbidden`: client address is outside `http.allow`
+- `404 Not Found`: unknown endpoint
+- `405 Method Not Allowed`: `/ping` called without `POST`
+
+Generate a token, for example, with:
+
+```bash
+openssl rand -hex 32
+```
+
+A configuration reload also reloads the HTTP listener. Changes to `bind`,
+`allow`, `port`, or `token` therefore take effect after:
+
+```bash
+sudo systemctl reload tv-converter.service
 ```

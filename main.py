@@ -3,12 +3,13 @@ from __future__ import annotations
 
 import argparse
 import signal
-import time
+import threading
 from pathlib import Path
 
 from config import load_config, source_config
 from converter import Converter
 from event_logger import configure_logging, logger
+from http_wakeup import HTTPWakeupService
 from mqtt_controller import MQTTController, ServiceControl
 from postprocessing import PlexPostprocessor
 from recording_queue import RecordingQueue
@@ -43,27 +44,35 @@ class App:
         self.config_path = config_path
         self.config = load_config(config_path)
         self.control = ServiceControl()
+        self.wakeup_event = threading.Event()
         self.queue = RecordingQueue()
         self.mqtt = MQTTController(self.config.get("mqtt", {}), lambda: None, self.control)
         self.converter: Converter | None = None
         self.tvheadend = TvheadendImporter(self.config.get("tvheadend", {}))
         self.idle = TVHeadendIdleMonitor(self.config.get("tvheadend", {}))
         self.plex = PlexPostprocessor(self.config.get("postprocessing", {}))
+        self.http_wakeup = HTTPWakeupService(self.config.get("http", {}), self.wakeup_event)
 
     def request_reload(self, signum=None, frame=None) -> None:
         logger.info("Reload requested.")
         self.control.reload_requested = True
+        self.wakeup_event.set()
 
     def reload(self) -> None:
         logger.info("Reloading configuration.")
-        self.config = load_config(self.config_path)
+        new_config = load_config(self.config_path)
+        self.http_wakeup.stop()
+        self.config = new_config
         self.control.reload_requested = False
         self.tvheadend = TvheadendImporter(self.config.get("tvheadend", {}))
         self.idle = TVHeadendIdleMonitor(self.config.get("tvheadend", {}))
         self.plex = PlexPostprocessor(self.config.get("postprocessing", {}))
+        self.http_wakeup = HTTPWakeupService(self.config.get("http", {}), self.wakeup_event)
+        self.http_wakeup.start()
 
     def stop(self, signum=None, frame=None) -> None:
         self.control.stop_requested = True
+        self.wakeup_event.set()
 
         if self.converter is not None:
             self.converter.runner.terminate()
@@ -76,6 +85,7 @@ class App:
         self.converter = Converter(self.config, self.mqtt)
         self.mqtt.process_getter = lambda: self.converter.runner.process
         self.mqtt.start()
+        self.http_wakeup.start()
 
         try:
             while not self.control.stop_requested:
@@ -90,11 +100,12 @@ class App:
 
                     if added == 0:
                         self.mqtt.publish_runtime_status(state="idle", progress=0, queue={"current": 0, "total": 0})
-                        self._sleep_poll_interval()
+                        self._wait_for_wakeup()
                         continue
 
                 self._process_queue(dry_run, show_ffmpeg, show_tvh_json)
         finally:
+            self.http_wakeup.stop()
             self.mqtt.stop()
 
     def _process_queue(self, dry_run: bool, show_ffmpeg: bool, show_tvh_json: bool) -> None:
@@ -232,13 +243,17 @@ class App:
             print("Tvheadend JSON:")
             print(self.tvheadend.build_json(recording, dummy))
 
-    def _sleep_poll_interval(self) -> None:
+    def _wait_for_wakeup(self) -> None:
         interval = int(self.config.get("service", {}).get("poll_interval", 300))
 
-        for _ in range(interval):
-            if self.control.stop_requested or self.control.reload_requested:
-                return
-            time.sleep(1)
+        if interval == 0:
+            logger.info("Polling disabled; waiting for HTTP wakeup.")
+            triggered = self.wakeup_event.wait()
+        else:
+            triggered = self.wakeup_event.wait(timeout=interval)
+
+        if triggered:
+            self.wakeup_event.clear()
 
 
 def main():

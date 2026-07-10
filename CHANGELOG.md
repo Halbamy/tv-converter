@@ -2,6 +2,36 @@
 
 All notable changes to this project are documented in this file.
 
+## [2.2.0]
+
+### Added
+
+- Authenticated HTTP wakeup endpoint `POST /ping` for event-driven source scans.
+- Client address filtering with IPv4 or IPv6 addresses and CIDR networks.
+- HTTP listener reload through the existing systemd configuration reload.
+
+### Changed
+
+- `service.poll_interval: 0` now disables periodic polling. After the initial
+  source scan, the service waits for a valid HTTP wakeup.
+
+### Configuration changes ⚠️
+
+Add the optional HTTP wakeup section:
+
+```yaml
+http:
+  enabled: false
+  bind: 0.0.0.0
+  allow: 192.168.0.0/24
+  port: 8080
+  token:
+```
+
+When `http.enabled` is `true`, `http.token` must be set. Setting
+`service.poll_interval` to `0` also requires the HTTP wakeup service to be
+enabled, otherwise configuration validation fails.
+
 ## [2.1.0]
 
 ### Added

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ipaddress
 from pathlib import Path
 from typing import Any
 
@@ -70,6 +71,64 @@ def validate_config(cfg: dict[str, Any]) -> None:
         for key in ("min_height", "preset", "crf", "qsv_global_quality", "vaapi_qp"):
             if key not in profile:
                 raise ConfigError(f"profiles.{name}.{key} is required")
+
+    service = cfg.get("service", {})
+
+    try:
+        poll_interval = int(service.get("poll_interval", 300))
+    except (TypeError, ValueError) as exc:
+        raise ConfigError("service.poll_interval must be an integer") from exc
+
+    if poll_interval < 0:
+        raise ConfigError("service.poll_interval must be greater than or equal to zero")
+
+    http = cfg.get("http", {})
+    http_enabled = bool(http.get("enabled", False))
+
+    if poll_interval == 0 and not http_enabled:
+        raise ConfigError(
+            "service.poll_interval is zero, but the HTTP wakeup service is disabled"
+        )
+
+    if http_enabled:
+        bind = str(http.get("bind", "")).strip()
+        allowed = str(http.get("allow", "")).strip()
+        token = str(http.get("token", ""))
+
+        if not bind:
+            raise ConfigError("http.bind is required when HTTP wakeup is enabled")
+
+        try:
+            bind_address = ipaddress.ip_address(bind)
+        except ValueError as exc:
+            raise ConfigError("http.bind must be an IPv4 or IPv6 address") from exc
+
+        try:
+            port = int(http.get("port", 8080))
+        except (TypeError, ValueError) as exc:
+            raise ConfigError("http.port must be an integer") from exc
+
+        if not 1 <= port <= 65535:
+            raise ConfigError("http.port must be between 1 and 65535")
+
+        if not allowed:
+            raise ConfigError("http.allow is required when HTTP wakeup is enabled")
+
+        if allowed == "0.0.0.0":
+            allowed = "0.0.0.0/0"
+        elif allowed == "::":
+            allowed = "::/0"
+
+        try:
+            allowed_network = ipaddress.ip_network(allowed, strict=False)
+        except ValueError as exc:
+            raise ConfigError("http.allow must be an IP address or CIDR network") from exc
+
+        if bind_address.version != allowed_network.version:
+            raise ConfigError("http.bind and http.allow must use the same IP version")
+
+        if not token:
+            raise ConfigError("http.token must not be empty when HTTP wakeup is enabled")
 
 
 def is_verbose(cfg: dict[str, Any]) -> bool:

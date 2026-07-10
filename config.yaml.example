@@ -56,7 +56,16 @@ profiles:
     vaapi_qp: 25
 
 service:
+  # Seconds between source scans. Set to 0 to disable periodic polling and
+  # process new recordings only after a successful HTTP /ping request.
   poll_interval: 300
+
+http:
+  enabled: false
+  bind: 0.0.0.0
+  allow: 192.168.0.0/24
+  port: 8080
+  token:
 
 mqtt:
   enabled: false
