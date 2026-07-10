@@ -2,6 +2,25 @@
 
 All notable changes to this project are documented in this file.
 
+## [2.1.0]
+
+### Added
+
+- MKV container metadata for title, summary, description, channel, recording
+  date, converter version, encoder, and encoding profile.
+
+### Changed
+
+- `encoder.type: none` now uses an FFmpeg stream-copy remux to MKV so metadata
+  is written without re-encoding video or audio.
+
+## [2.0.1]
+
+### Fixed
+
+- TVHeadend idle detection now uses only active subscriptions and no longer
+  treats scheduled recordings as active.
+
 ## [2.0.0]
 
 ### Added
@@ -20,5 +39,3 @@ All notable changes to this project are documented in this file.
 - `config.yaml.example` is shipped below `/var/lib/tv-converter` and copied to
   `/etc/tv-converter/config.yaml` only when no active configuration exists.
 
-
-v2.0.1: Idle detection now uses only active subscriptions.

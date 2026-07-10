@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import shutil
 import threading
 import time
 
@@ -47,9 +46,6 @@ class Converter:
         plan = self.encoder.build_plan(recording)
         self.current_plan = plan
 
-        if plan.encoder_name == "none":
-            return self._copy_without_transcoding(recording, plan)
-
         if plan.output_file.exists():
             self.permissions.file(plan.output_file)
             return self._converted_recording(recording, plan)
@@ -76,21 +72,6 @@ class Converter:
         plan.temp_file.rename(plan.output_file)
         self.permissions.file(plan.output_file)
         logger.info("Finished conversion: %s", plan.output_file.name)
-
-        return self._converted_recording(recording, plan)
-
-    def _copy_without_transcoding(self, recording: Recording, plan) -> ConvertedRecording:
-        if plan.output_file.exists():
-            self.permissions.file(plan.output_file)
-            return self._converted_recording(recording, plan)
-
-        if recording.filename.resolve() == plan.output_file.resolve():
-            raise RuntimeError("encoder.type=none cannot copy source file onto itself.")
-
-        logger.info("Starting copy: %s", plan.output_file.name)
-        shutil.copy2(recording.filename, plan.output_file)
-        self.permissions.file(plan.output_file)
-        logger.info("Finished copy: %s", plan.output_file.name)
 
         return self._converted_recording(recording, plan)
 
