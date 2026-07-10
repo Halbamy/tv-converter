@@ -1,0 +1,114 @@
+source:
+  type: mythtv
+
+  mythtv:
+    host: 192.168.0.27
+    user: mythtv
+    password: mythtv
+    database: mythconverg
+
+    output:
+      directory: /media/storage0/tvheadend/imported_from_mythtv
+
+    delete_after_import: false
+
+  tvheadend:
+    url: http://192.168.0.33:9981
+
+    authentication:
+      type: persistent_auth     # basic | persistent_auth
+      username:
+      password:
+      auth_code:
+
+    output:
+      directory: original
+
+    delete_after_import: false
+
+encoder:
+  type: auto
+  copy_hevc: true
+  audio_quality: "2"
+
+  qsv:
+    device: /dev/dri/renderD128
+    extra_hw_frames: 10
+
+  vaapi:
+    device: /dev/dri/renderD128
+    rc_mode: ICQ
+    extra_hw_frames: 10
+
+profiles:
+  sd:
+    min_height: 0
+    preset: fast
+    crf: 28
+    qsv_global_quality: 28
+    vaapi_qp: 29
+
+  hd:
+    min_height: 720
+    preset: slow
+    crf: 24
+    qsv_global_quality: 24
+    vaapi_qp: 25
+
+service:
+  poll_interval: 300
+
+mqtt:
+  enabled: true
+  broker: 192.168.0.13
+  port: 1883
+  username:
+  password:
+  topic: tele/wt32-eth01_DE2250/SENSOR
+  topic_prefix: tv-converter
+  json_path: ZPA.Power_curr
+  pause_watt: 0
+  resume_watt: 50
+  timeout_seconds: 30
+
+tvheadend:
+  enabled: true
+  url: http://192.168.0.33:9981
+
+  authentication:
+    type: persistent_auth       # basic | persistent_auth
+    username:
+    password:
+    auth_code:
+
+  comment: imported by tv-converter
+
+  idle:
+    enabled: true
+    poll_interval: 300
+
+  channel_mapping:
+    # "ZDF HD": "ZDF"
+    # "Das Erste HD": "Das Erste HD"
+
+postprocessing:
+  plex:
+    enabled: false
+    refresh_url:
+    verify_ssl: false
+    timeout: 10
+
+output:
+  description_fallback_chars: 25
+
+permissions:
+  file_mode: "664"
+
+selection:
+  min_minutes: 1
+  limit: 0
+  title_contains:
+  channel_contains:
+
+logging:
+  level: normal
