@@ -19,3 +19,6 @@ All notable changes to this project are documented in this file.
 - The active configuration is stored at `/etc/tv-converter/config.yaml`.
 - `config.yaml.example` is shipped below `/var/lib/tv-converter` and copied to
   `/etc/tv-converter/config.yaml` only when no active configuration exists.
+
+
+v2.0.1: Idle detection now uses only active subscriptions.

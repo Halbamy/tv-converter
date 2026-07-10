@@ -28,7 +28,11 @@ jobs:
         shell: bash
         run: |
           source_version=$(sed -n 's/^VERSION = "\([^"]*\)"/\1/p' models.py)
-          test "$source_version" = "${{ steps.version.outputs.value }}"
+
+          release_version="${{ steps.version.outputs.value }}"
+          release_version="${release_version%%-rc*}"
+          
+          test "$source_version" = "$release_version"
 
       - name: Validate Python sources
         run: python3 -m compileall -q .

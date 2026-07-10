@@ -120,3 +120,6 @@ tv-converter_2.0.0_all.deb
 tv-converter-2.0.0.zip
 SHA256SUMS
 ```
+
+
+v2.0.1: Idle detection now uses only active subscriptions.

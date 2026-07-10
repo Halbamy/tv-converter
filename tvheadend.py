@@ -25,23 +25,7 @@ class TVHeadendIdleMonitor:
             time.sleep(self.poll_interval)
 
     def is_idle(self) -> bool:
-        return not self.has_active_recordings() and not self.has_active_subscriptions()
-
-    def has_active_recordings(self) -> bool:
-        data = self._get_json("/api/dvr/entry/grid_upcoming", {"limit": 999999})
-
-        for entry in data.get("entries", []):
-            status = str(entry.get("status", "")).lower()
-            sched_status = str(entry.get("sched_status", "")).lower()
-
-            if "recording" in status or "recording" in sched_status:
-                return True
-
-            if entry.get("filename") and entry.get("start_real") and not entry.get("stop_real"):
-                return True
-
-        return False
-
+        return not self.has_active_subscriptions()
     def has_active_subscriptions(self) -> bool:
         data = self._get_json("/api/status/subscriptions", {})
 
