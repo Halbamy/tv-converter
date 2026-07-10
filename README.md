@@ -1,4 +1,4 @@
-# tv-converter v2.3.0
+# tv-converter v2.3.1
 
 `tv-converter` converts recordings from MythTV or TVHeadend and imports the
 result into TVHeadend.
@@ -31,6 +31,21 @@ Each recording is completed before the next one starts:
 When the TVHeadend source and destination URLs refer to the same instance,
 `/api/dvr/entry/filemoved` updates the existing DVR entry. Otherwise a new DVR
 entry is created with `/api/dvr/entry/create`.
+
+## Existing MKV detection
+
+The destination MKV is the persistent processing state:
+
+- MKVs whose `encoded_by` tag starts with `tv-converter` are considered fully
+  processed and are skipped.
+- Existing HEVC MKVs without tv-converter metadata are treated as legacy
+  outputs. They are remuxed with stream copy and receive the current metadata;
+  the video is not transcoded again.
+- If an existing MKV cannot be analyzed with `ffprobe`, tv-converter logs a
+  warning and skips it. The file is never replaced or repaired automatically.
+
+The metadata-only remux writes to a temporary file and replaces the existing
+MKV only after FFmpeg completed successfully.
 
 ## Configuration
 

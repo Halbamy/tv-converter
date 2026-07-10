@@ -34,7 +34,13 @@ class Converter:
     def prepare(self, recording: Recording):
         return self.encoder.build_plan(recording)
 
-    def convert(self, recording: Recording, file_index: int, file_count: int) -> ConvertedRecording:
+    def convert(
+        self,
+        recording: Recording,
+        file_index: int,
+        file_count: int,
+        plan=None,
+    ) -> ConvertedRecording | None:
         self.current_recording = recording
         self.file_index = file_index
         self.file_count = file_count
@@ -43,17 +49,35 @@ class Converter:
         self.last_eta = "--:--"
         self._status_stop.clear()
 
-        plan = self.encoder.build_plan(recording)
+        plan = plan or self.encoder.build_plan(recording)
         self.current_plan = plan
 
-        if plan.output_file.exists():
-            self.permissions.file(plan.output_file)
-            return self._converted_recording(recording, plan)
+        if plan.action == "skip_processed":
+            logger.info("Already processed by tv-converter, skipping: %s", plan.output_file)
+            return None
+
+        if plan.action == "manual_review":
+            logger.warning(
+                "Existing MKV could not be analyzed and was skipped. "
+                "Please check it manually: %s (%s)",
+                plan.output_file,
+                plan.message or "ffprobe failed",
+            )
+            return None
 
         if plan.temp_file and plan.temp_file.exists():
             raise RuntimeError(f"Unfinished conversion exists. Remove manually:\n  {plan.temp_file}")
 
-        logger.info("Starting conversion: %s", plan.output_file.name)
+        assert plan.media is not None
+
+        if plan.action == "metadata_remux":
+            logger.info(
+                "Legacy HEVC recording without tv-converter metadata detected; "
+                "adding metadata only: %s",
+                plan.output_file.name,
+            )
+        else:
+            logger.info("Starting conversion: %s", plan.output_file.name)
         self._start_status_thread()
 
         try:
@@ -69,9 +93,12 @@ class Converter:
             raise RuntimeError(self._ffmpeg_error_message(recording, plan, rc))
 
         assert plan.temp_file is not None
-        plan.temp_file.rename(plan.output_file)
+        plan.temp_file.replace(plan.output_file)
         self.permissions.file(plan.output_file)
-        logger.info("Finished conversion: %s", plan.output_file.name)
+        if plan.action == "metadata_remux":
+            logger.info("Finished metadata update: %s", plan.output_file.name)
+        else:
+            logger.info("Finished conversion: %s", plan.output_file.name)
 
         return self._converted_recording(recording, plan)
 
@@ -79,11 +106,14 @@ class Converter:
         return ConvertedRecording(
             source=recording,
             output_file=plan.output_file,
-            duration_seconds=duration_seconds(plan.output_file, self.config) or plan.media.duration_seconds,
+            duration_seconds=(
+                duration_seconds(plan.output_file, self.config)
+                or (plan.media.duration_seconds if plan.media else 0)
+            ),
             input_size=recording.filename.stat().st_size,
             output_size=plan.output_file.stat().st_size,
             encoder_name=plan.encoder_name,
-            profile_name=plan.media.profile.name,
+            profile_name=plan.media.profile.name if plan.media else "unknown",
         )
 
     def _ffmpeg_error_message(self, recording: Recording, plan, rc: int) -> str:

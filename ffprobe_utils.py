@@ -108,8 +108,19 @@ def select_audio(streams: list[dict]) -> tuple[int, str, str, str]:
     return best
 
 
-def media_info(path: Path, config: dict) -> MediaInfo:
-    data = ffprobe_json(path, config)
+def _duration_from_probe(data: dict) -> int:
+    value = data.get("format", {}).get("duration")
+
+    try:
+        if value and value != "N/A":
+            return round(float(value))
+    except (TypeError, ValueError):
+        pass
+
+    return 0
+
+
+def media_info_from_probe(data: dict, config: dict, path: Path) -> MediaInfo:
     streams = data.get("streams", [])
     video = next((stream for stream in streams if stream.get("codec_type") == "video"), None)
 
@@ -122,7 +133,7 @@ def media_info(path: Path, config: dict) -> MediaInfo:
     profile = determine_profile(height, config["profiles"])
 
     return MediaInfo(
-        duration_seconds=duration_seconds(path, config),
+        duration_seconds=_duration_from_probe(data),
         video_codec=video_codec,
         width=int(video.get("width", 0)),
         height=height,
@@ -134,3 +145,43 @@ def media_info(path: Path, config: dict) -> MediaInfo:
         audio_copy=audio_codec == "aac",
         profile=profile,
     )
+
+
+def normalized_format_tags(data: dict) -> dict[str, str]:
+    tags = data.get("format", {}).get("tags", {}) or {}
+    return {str(key).lower(): str(value) for key, value in tags.items()}
+
+
+def is_tv_converter_output(data: dict) -> bool:
+    encoded_by = normalized_format_tags(data).get("encoded_by", "")
+    return encoded_by.strip().lower().startswith("tv-converter")
+
+
+def inspect_existing_output(path: Path, config: dict) -> tuple[MediaInfo, bool]:
+    # One ffprobe call provides both stream information and container tags.
+    data = ffprobe_json(path, config)
+    return media_info_from_probe(data, config, path), is_tv_converter_output(data)
+
+
+def media_info(path: Path, config: dict) -> MediaInfo:
+    data = ffprobe_json(path, config)
+    media = media_info_from_probe(data, config, path)
+
+    # Transport streams do not always expose format.duration in the full probe.
+    # Preserve the existing fallback for normal source analysis.
+    if media.duration_seconds <= 0:
+        return MediaInfo(
+            duration_seconds=duration_seconds(path, config),
+            video_codec=media.video_codec,
+            width=media.width,
+            height=media.height,
+            audio_stream_index=media.audio_stream_index,
+            audio_codec=media.audio_codec,
+            audio_language=media.audio_language,
+            audio_reason=media.audio_reason,
+            video_copy=media.video_copy,
+            audio_copy=media.audio_copy,
+            profile=media.profile,
+        )
+
+    return media

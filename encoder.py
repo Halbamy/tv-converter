@@ -4,7 +4,7 @@ from pathlib import Path
 import subprocess
 
 from config import destination_config, is_verbose
-from ffprobe_utils import media_info
+from ffprobe_utils import inspect_existing_output, media_info
 from filename_utils import build_output_filename
 from models import EncodingPlan, MediaInfo, Recording, VERSION
 
@@ -238,13 +238,83 @@ class Encoder:
         ]
         return EncodingPlan(command, media, output, temp, encoder_name)
 
+    def build_metadata_remux_plan(
+        self,
+        recording: Recording,
+        media: MediaInfo,
+        output: Path,
+    ) -> EncodingPlan:
+        temp = output.with_suffix(output.suffix + ".part")
+        encoder_name = "copy"
+        command = [
+            "ffmpeg",
+            "-hide_banner",
+            "-nostats",
+            "-loglevel",
+            "warning",
+            "-i",
+            str(output),
+            "-map",
+            "0",
+            "-map_metadata",
+            "0",
+            "-c",
+            "copy",
+            *self.metadata_options(recording, media, encoder_name),
+            "-progress",
+            "pipe:1",
+            "-f",
+            "matroska",
+            str(temp),
+        ]
+        return EncodingPlan(
+            command,
+            media,
+            output,
+            temp,
+            encoder_name,
+            action="metadata_remux",
+        )
+
     def build_plan(self, recording: Recording) -> EncodingPlan:
-        media = media_info(recording.filename, self.config)
+        output = self.output_filename(recording, suffix=".mkv")
+        existing_media = None
+
+        if output.exists():
+            try:
+                existing_media, processed = inspect_existing_output(output, self.config)
+            except Exception as exc:
+                return EncodingPlan(
+                    [],
+                    None,
+                    output,
+                    None,
+                    "unknown",
+                    action="manual_review",
+                    message=str(exc),
+                )
+
+            if processed:
+                return EncodingPlan(
+                    [],
+                    existing_media,
+                    output,
+                    None,
+                    "existing",
+                    action="skip_processed",
+                )
+
+            if existing_media.video_codec == "hevc":
+                return self.build_metadata_remux_plan(recording, existing_media, output)
+
+        if recording.filename.resolve() == output.resolve() and existing_media is not None:
+            media = existing_media
+        else:
+            media = media_info(recording.filename, self.config)
 
         if self._encoder_type() == "none":
             return self.build_none_plan(recording, media)
 
-        output = self.output_filename(recording, suffix=".mkv")
         temp = output.with_suffix(output.suffix + ".part")
         video_opts, encoder_name = self.video_options(media)
         audio_opts = self.audio_options(media)

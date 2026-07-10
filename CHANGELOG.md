@@ -1,5 +1,17 @@
 # Changelog
 
+## [2.3.1]
+
+### Added
+
+- Existing destination MKVs are inspected for tv-converter metadata.
+- Legacy HEVC MKVs without metadata are upgraded through a metadata-only stream-copy remux.
+
+### Changed
+
+- MKVs whose `encoded_by` tag starts with `tv-converter` are skipped as already processed.
+- An existing MKV that cannot be analyzed is left untouched and reported with a warning for manual review.
+
 ## [2.3.0]
 
 ### Added

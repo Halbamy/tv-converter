@@ -5,7 +5,7 @@ from datetime import datetime
 from pathlib import Path
 
 
-VERSION = "2.3.0"
+VERSION = "2.3.1"
 
 
 @dataclass(frozen=True)
@@ -50,10 +50,12 @@ class MediaInfo:
 @dataclass(frozen=True)
 class EncodingPlan:
     command: list[str]
-    media: MediaInfo
+    media: MediaInfo | None
     output_file: Path
     temp_file: Path | None
     encoder_name: str
+    action: str = "transcode"
+    message: str = ""
 
 
 @dataclass(frozen=True)

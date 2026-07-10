@@ -150,13 +150,20 @@ class App:
             self._print_plan(recording, plan, 1, total, show_ffmpeg, show_tvh_json)
             return
 
+        if plan.action in {"skip_processed", "manual_review"}:
+            self.converter.convert(recording, 1, total, plan)
+            return
+
         self.state_monitor.wait_until_not_busy()
 
         try:
-            converted = self.converter.convert(recording, 1, total)
+            converted = self.converter.convert(recording, 1, total, plan)
         except RuntimeError as exc:
             logger.error("%s", exc)
             self.control.stop_requested = True
+            return
+
+        if converted is None:
             return
 
         self.state_monitor.wait_until_not_busy()
@@ -231,10 +238,20 @@ class App:
         print(f"Input: {recording.filename}")
         print(f"Output: {plan.output_file}")
 
-        if plan.encoder_name == "none":
+        if plan.action == "skip_processed":
+            print("Mode: already processed by tv-converter (skip)")
+        elif plan.action == "manual_review":
+            print("Mode: manual review required (skip)")
+            print(f"Reason: {plan.message}")
+        elif plan.action == "metadata_remux":
+            print("Mode: legacy HEVC metadata-only remux")
+            print(f"Temp: {plan.temp_file}")
+        elif plan.encoder_name == "none":
             print("Mode: none (copy without transcoding)")
         else:
             print(f"Temp: {plan.temp_file}")
+
+        if plan.media is not None and plan.action not in {"skip_processed", "manual_review"}:
             print(
                 f"Video: {plan.media.video_codec} "
                 f"{plan.media.width}x{plan.media.height} -> {plan.encoder_name}"
@@ -246,7 +263,7 @@ class App:
             print("FFmpeg:")
             print(" ".join(plan.command))
 
-        if show_tvh_json:
+        if show_tvh_json and plan.media is not None and plan.action not in {"skip_processed", "manual_review"}:
             from models import ConvertedRecording
 
             dummy = ConvertedRecording(
