@@ -3,14 +3,14 @@ source:
   type: mythtv
 
   mythtv:
-    host: 192.168.0.27
-    user: mythtv
+    host:
+    user:
     password:
     database: mythconverg
     poll_interval: 300
 
   tvheadend:
-    url: http://192.168.0.33:9981
+    url:
 
     authentication:
       type: basic              # basic | persistent_auth
@@ -22,8 +22,8 @@ destination:
   type: tvheadend
 
   tvheadend:
-    enabled: true
-    url: http://192.168.0.33:9981
+    enabled: false
+    url:
 
     authentication:
       type: basic              # basic | persistent_auth
@@ -32,7 +32,7 @@ destination:
       auth_code:
 
     output:
-      directory: /media/storage0/tvheadend/imported
+      directory:
 
     delete_source_after_import: false
     comment: imported by tv-converter
