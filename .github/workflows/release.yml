@@ -44,7 +44,7 @@ jobs:
             --format=zip \
             --prefix="tv-converter-${{ steps.version.outputs.value }}/" \
             -o "dist/tv-converter-${{ steps.version.outputs.value }}.zip" \
-            HEAD
+            "${{ github.ref_name }}"
 
       - name: Generate checksums
         working-directory: dist
