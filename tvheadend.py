@@ -25,7 +25,7 @@ class TVHeadendIdleMonitor:
             time.sleep(self.poll_interval)
 
     def is_idle(self) -> bool:
-        return not self.has_active_recordings() and not self.has_active_subscriptions()
+        return not self.has_active_subscriptions()
     def has_active_subscriptions(self) -> bool:
         data = self._get_json("/api/status/subscriptions", {})
 
