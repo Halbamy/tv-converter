@@ -88,6 +88,14 @@ For the complete configuration, see `config.yaml.example`.
 The Debian service reads `/etc/tv-converter/config.yaml`. Use an override for a
 different user, group, or configuration path:
 
+The package also installs a `tv-converter` command in the system `PATH`. It
+uses the packaged virtual environment and `/etc/tv-converter/config.yaml` by
+default:
+
+```bash
+tv-converter --dry-run
+```
+
 ```bash
 sudo systemctl edit tv-converter
 ```

@@ -1,0 +1,7 @@
+#!/bin/sh
+set -e
+
+exec /var/lib/tv-converter/venv/bin/python \
+    /var/lib/tv-converter/main.py \
+    --config /etc/tv-converter/config.yaml \
+    "$@"

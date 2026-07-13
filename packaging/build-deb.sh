@@ -17,6 +17,7 @@ OUTPUT_DIR="$ROOT_DIR/dist"
 rm -rf "$BUILD_DIR"
 mkdir -p \
     "$BUILD_DIR/DEBIAN" \
+    "$BUILD_DIR/usr/bin" \
     "$BUILD_DIR/var/lib/tv-converter" \
     "$OUTPUT_DIR"
 
@@ -54,6 +55,8 @@ find "$ROOT_DIR" -maxdepth 1 -type f \( \
 \) -exec cp {} "$BUILD_DIR/var/lib/tv-converter/" \;
 
 cp -a "$ROOT_DIR/sources" "$BUILD_DIR/var/lib/tv-converter/sources"
+cp "$ROOT_DIR/packaging/tv-converter" "$BUILD_DIR/var/lib/tv-converter/tv-converter"
+ln -s /var/lib/tv-converter/tv-converter "$BUILD_DIR/usr/bin/tv-converter"
 find "$BUILD_DIR/var/lib/tv-converter" -type d -name __pycache__ -prune -exec rm -rf {} +
 find "$BUILD_DIR/var/lib/tv-converter" -type f -name '*.pyc' -delete
 mkdir -p "$BUILD_DIR/var/lib/tv-converter/systemd"
@@ -63,6 +66,7 @@ cp "$ROOT_DIR/systemd/tv-converter.service.in" \
 find "$BUILD_DIR/var/lib/tv-converter" -type d -exec chmod 0755 {} +
 find "$BUILD_DIR/var/lib/tv-converter" -type f -exec chmod 0644 {} +
 chmod 0755 "$BUILD_DIR/var/lib/tv-converter/main.py"
+chmod 0755 "$BUILD_DIR/var/lib/tv-converter/tv-converter"
 
 dpkg-deb --root-owner-group --build "$BUILD_DIR" \
     "$OUTPUT_DIR/${PACKAGE}_${VERSION}_${ARCH}.deb"
