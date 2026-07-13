@@ -88,7 +88,7 @@ postprocessing:
     enabled: false
     refresh_url:
     verify_ssl: false
-    suppress_ssl_warning: false
+    suppress_ssl_warning: true
     timeout: 10
 
 output:
