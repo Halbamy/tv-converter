@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from contextlib import redirect_stderr
+from io import StringIO
 from pathlib import Path
 import sys
 from types import SimpleNamespace
@@ -18,6 +20,7 @@ except ModuleNotFoundError:
     sys.modules["mysql.connector"] = mysql_connector_module
 
 import main as main_module
+from config import ConfigError
 from main import App
 from recording_queue import RecordingQueue
 
@@ -80,6 +83,33 @@ class PlexCommandTest(unittest.TestCase):
         plex.assert_called_once_with(config["postprocessing"])
         processor.refresh.assert_called_once_with(force=True)
         app.assert_not_called()
+
+
+class ConfigurationErrorTest(unittest.TestCase):
+    def test_unreadable_config_prints_error_and_full_help_without_traceback(self):
+        stderr = StringIO()
+
+        with (
+            patch.object(sys, "argv", ["tv-converter"]),
+            patch.object(main_module, "configure_logging"),
+            patch.object(
+                main_module,
+                "App",
+                side_effect=ConfigError(
+                    "Could not read config file /etc/tv-converter/config.yaml: Permission denied"
+                ),
+            ),
+            redirect_stderr(stderr),
+        ):
+            result = main_module.main()
+
+        output = stderr.getvalue()
+        self.assertEqual(result, 2)
+        self.assertIn("configuration error", output)
+        self.assertIn("Permission denied", output)
+        self.assertIn("--repair-moved-recordings", output)
+        self.assertIn("--refresh-plex", output)
+        self.assertNotIn("Traceback", output)
 
 
 if __name__ == "__main__":

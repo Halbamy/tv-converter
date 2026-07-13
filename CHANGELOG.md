@@ -10,6 +10,11 @@
   options to repair missing TVHeadend paths through `dvr/entry/filemoved`.
 - Added `--refresh-plex` to call the configured Plex refresh URL without
   starting the converter.
+- Configuration read and YAML errors now produce a concise CLI error and full
+  command help instead of a Python traceback.
+- Moved-recording repair now reads `dvr/entry/grid_removed`, processes only
+  entries with TVHeadend status `File missing`, ignores intentionally removed
+  files, and never selects the unchanged old path as a repair target.
 
 ### Changed
 

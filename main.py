@@ -3,10 +3,11 @@ from __future__ import annotations
 
 import argparse
 import signal
+import sys
 import threading
 from pathlib import Path
 
-from config import destination_config, load_config, source_config
+from config import ConfigError, destination_config, load_config, source_config
 from converter import Converter
 from event_logger import configure_logging, logger
 from mqtt_controller import MQTTController, ServiceControl
@@ -331,31 +332,42 @@ def main() -> int:
     if args.search_directory and not args.repair_moved_recordings:
         parser.error("--search-directory requires --repair-moved-recordings")
 
-    if args.refresh_plex:
-        config = load_config(args.config)
-        plex = PlexPostprocessor(config.get("postprocessing", {}))
-        return 0 if plex.refresh(force=True) else 1
+    try:
+        if args.refresh_plex:
+            config = load_config(args.config)
+            plex = PlexPostprocessor(config.get("postprocessing", {}))
+            return 0 if plex.refresh(force=True) else 1
 
-    if args.repair_moved_recordings:
-        config = load_config(args.config)
-        destination = destination_config(config)
-        directories = [Path(destination["output"]["directory"])]
-        directories.extend(Path(value) for value in args.search_directory)
-        repair = TVHeadendMovedRecordingRepair(destination)
-        result = repair.repair(directories, dry_run=args.dry_run)
-        logger.info(
-            "Moved recording repair completed "
-            "(checked=%s, missing=%s, found=%s, updated=%s, not_found=%s, errors=%s).",
-            result.checked,
-            result.missing,
-            result.found,
-            result.updated,
-            result.not_found,
-            result.errors,
-        )
-        return 1 if result.errors else 0
+        if args.repair_moved_recordings:
+            config = load_config(args.config)
+            destination = destination_config(config)
+            directories = [Path(destination["output"]["directory"])]
+            directories.extend(Path(value) for value in args.search_directory)
+            repair = TVHeadendMovedRecordingRepair(destination)
+            result = repair.repair(directories, dry_run=args.dry_run)
+            logger.info(
+                "Moved recording repair completed "
+                "(checked=%s, missing=%s, found=%s, updated=%s, not_found=%s, "
+                "without_filename=%s, intentionally_removed=%s, other_removed=%s, errors=%s).",
+                result.checked,
+                result.missing,
+                result.found,
+                result.updated,
+                result.not_found,
+                result.without_filename,
+                result.intentionally_removed,
+                result.other_removed,
+                result.errors,
+            )
+            return 1 if result.errors else 0
 
-    app = App(args.config)
+        app = App(args.config)
+    except ConfigError as exc:
+        print(f"tv-converter: configuration error: {exc}", file=sys.stderr)
+        print(file=sys.stderr)
+        parser.print_help(sys.stderr)
+        return 2
+
     app.run(args.dry_run, args.show_ffmpeg, args.show_tvh_json)
     return 0
 

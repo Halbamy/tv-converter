@@ -103,25 +103,76 @@ class TVHeadendMovedRecordingRepairTest(unittest.TestCase):
             self.assertEqual(result.updated, 0)
             repair.client.post.assert_not_called()
 
-    def test_existing_recording_path_is_not_changed(self):
+    def test_old_path_is_not_selected_as_the_new_path(self):
         with TemporaryDirectory() as tmp:
-            existing = Path(tmp) / "episode.ts"
-            existing.touch()
-            repair = self._repair_for(existing)
+            base = Path(tmp)
+            old_root = base / "old"
+            new_root = base / "new"
+            old_root.mkdir()
+            new_root.mkdir()
+            old_path = old_root / "episode.ts"
+            new_path = new_root / "episode.ts"
+            old_path.touch()
+            new_path.touch()
+            repair = self._repair_for(old_path)
 
-            result = repair.repair([Path(tmp)])
+            result = repair.repair([old_root, new_root])
 
-            self.assertEqual(result.checked, 1)
-            self.assertEqual(result.missing, 0)
+            self.assertEqual(result.updated, 1)
+            repair.client.post.assert_called_once_with(
+                "/api/dvr/entry/filemoved",
+                data={"src": str(old_path), "dst": str(new_path)},
+                timeout=30,
+            )
+
+    def test_intentionally_removed_recording_is_not_repaired(self):
+        with TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            match = base / "episode.ts"
+            match.touch()
+            repair = self._repair_for(base / "missing" / "episode.ts", fileremoved=True)
+
+            result = repair.repair([base])
+
+            self.assertEqual(result.intentionally_removed, 1)
+            self.assertEqual(result.checked, 0)
+            repair.client.post.assert_not_called()
+
+    def test_removed_entry_without_file_missing_status_is_ignored(self):
+        with TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            match = base / "episode.ts"
+            match.touch()
+            repair = self._repair_for(
+                base / "missing" / "episode.ts",
+                status="Completed OK",
+            )
+
+            result = repair.repair([base])
+
+            self.assertEqual(result.other_removed, 1)
+            self.assertEqual(result.checked, 0)
             repair.client.post.assert_not_called()
 
     @staticmethod
-    def _repair_for(source: Path) -> TVHeadendMovedRecordingRepair:
+    def _repair_for(
+        source: Path,
+        fileremoved: bool = False,
+        status: str = "File missing",
+    ) -> TVHeadendMovedRecordingRepair:
         repair = TVHeadendMovedRecordingRepair({"url": "http://tvh"})
         repair.client = Mock()
-        listing = Mock()
-        listing.json.return_value = {"entries": [{"files": [{"filename": str(source)}]}]}
-        repair.client.get.return_value = listing
+        removed = Mock()
+        removed.json.return_value = {
+            "entries": [
+                {
+                    "files": [{"filename": str(source)}],
+                    "fileremoved": fileremoved,
+                    "status": status,
+                }
+            ]
+        }
+        repair.client.get.return_value = removed
         repair.client.post.return_value = Mock()
         return repair
 

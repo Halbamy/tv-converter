@@ -13,11 +13,19 @@ class ConfigError(RuntimeError):
 def load_config(path: str | Path) -> dict[str, Any]:
     path = Path(path)
 
-    if not path.is_file():
-        raise ConfigError(f"Config file not found: {path}")
+    try:
+        if not path.is_file():
+            raise ConfigError(f"Config file not found: {path}")
 
-    with path.open("r", encoding="utf-8") as f:
-        cfg = yaml.safe_load(f)
+        with path.open("r", encoding="utf-8") as f:
+            cfg = yaml.safe_load(f)
+    except ConfigError:
+        raise
+    except OSError as exc:
+        detail = exc.strerror or str(exc)
+        raise ConfigError(f"Could not read config file {path}: {detail}") from exc
+    except yaml.YAMLError as exc:
+        raise ConfigError(f"Invalid YAML in config file {path}: {exc}") from exc
 
     if not isinstance(cfg, dict):
         raise ConfigError("Config file is empty or invalid.")

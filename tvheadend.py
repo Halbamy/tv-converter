@@ -20,6 +20,9 @@ class MovedRecordingRepairResult:
     found: int = 0
     updated: int = 0
     not_found: int = 0
+    without_filename: int = 0
+    intentionally_removed: int = 0
+    other_removed: int = 0
     errors: int = 0
 
 
@@ -34,27 +37,26 @@ class TVHeadendMovedRecordingRepair:
     ) -> MovedRecordingRepairResult:
         directories = self._usable_directories(search_directories)
         result = MovedRecordingRepairResult()
-        response = self.client.get(
-            "/api/dvr/entry/grid_finished",
-            params={"limit": 999999, "sort": "start", "dir": "ASC"},
-            timeout=30,
-        )
-        response.raise_for_status()
 
-        for entry in response.json().get("entries", []):
+        for entry in self._entries("/api/dvr/entry/grid_removed"):
+            if bool(entry.get("fileremoved", entry.get("file_removed", False))):
+                result.intentionally_removed += 1
+                continue
+
+            if str(entry.get("status", "")).strip().casefold() != "file missing":
+                result.other_removed += 1
+                continue
+
             filename = self._filename(entry)
 
             if not filename:
+                result.without_filename += 1
                 continue
 
             result.checked += 1
             source = Path(filename)
-
-            if source.exists():
-                continue
-
             result.missing += 1
-            destination = self._find_first(source.name, directories)
+            destination = self._find_first(source.name, directories, source)
 
             if destination is None:
                 result.not_found += 1
@@ -97,6 +99,15 @@ class TVHeadendMovedRecordingRepair:
 
         return result
 
+    def _entries(self, path: str) -> list[dict]:
+        response = self.client.get(
+            path,
+            params={"limit": 999999, "sort": "start", "dir": "ASC"},
+            timeout=30,
+        )
+        response.raise_for_status()
+        return list(response.json().get("entries", []))
+
     def _usable_directories(self, directories: list[Path]) -> list[Path]:
         usable = []
         seen = set()
@@ -119,10 +130,16 @@ class TVHeadendMovedRecordingRepair:
         return usable
 
     @staticmethod
-    def _find_first(filename: str, directories: list[Path]) -> Path | None:
+    def _find_first(
+        filename: str,
+        directories: list[Path],
+        source: Path,
+    ) -> Path | None:
+        source = source.resolve()
+
         for directory in directories:
             for candidate in directory.rglob(escape(filename)):
-                if candidate.is_file():
+                if candidate.is_file() and candidate.resolve() != source:
                     return candidate
 
         return None

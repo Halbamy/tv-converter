@@ -100,7 +100,9 @@ Moved TVHeadend recording paths can be repaired without starting the converter.
 The configured destination output directory is searched recursively first;
 additional directories are searched in the order given. Only missing paths are
 changed, and the first exact filename match is sent to
-`/api/dvr/entry/filemoved`:
+`/api/dvr/entry/filemoved`. Only entries returned by TVHeadend with the exact
+status `File missing` are processed. The old path is never accepted as the new
+match, and recordings intentionally removed through TVHeadend are ignored:
 
 ```bash
 tv-converter --repair-moved-recordings \
