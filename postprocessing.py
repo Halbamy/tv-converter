@@ -17,8 +17,8 @@ class PlexPostprocessor:
         self.suppress_ssl_warning = bool(cfg.get("suppress_ssl_warning", False))
         self.timeout = int(cfg.get("timeout", 10))
 
-    def refresh(self) -> bool:
-        if not self.enabled:
+    def refresh(self, force: bool = False) -> bool:
+        if not self.enabled and not force:
             return True
 
         if not self.refresh_url:

@@ -48,6 +48,27 @@ class PlexPostprocessorTest(unittest.TestCase):
         self.assertEqual(len(caught), 1)
         self.assertIs(caught[0].category, InsecureRequestWarning)
 
+    @patch("postprocessing.requests.get")
+    def test_forced_refresh_runs_when_automatic_postprocessing_is_disabled(self, get):
+        get.return_value = Mock()
+        processor = PlexPostprocessor(
+            {
+                "plex": {
+                    "enabled": False,
+                    "refresh_url": "https://plex/library/sections/all/refresh",
+                    "verify_ssl": True,
+                }
+            }
+        )
+
+        self.assertTrue(processor.refresh(force=True))
+
+        get.assert_called_once_with(
+            "https://plex/library/sections/all/refresh",
+            timeout=10,
+            verify=True,
+        )
+
     @staticmethod
     def _warn_and_respond(*args, **kwargs):
         warnings.warn("Unverified HTTPS request", InsecureRequestWarning)

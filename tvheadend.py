@@ -3,11 +3,141 @@ from __future__ import annotations
 import json
 import time
 from collections.abc import Callable
+from dataclasses import dataclass
+from glob import escape
+from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
 
 from event_logger import logger
 from models import ConvertedRecording, Recording
 from tvheadend_client import TVHeadendClient
+
+
+@dataclass
+class MovedRecordingRepairResult:
+    checked: int = 0
+    missing: int = 0
+    found: int = 0
+    updated: int = 0
+    not_found: int = 0
+    errors: int = 0
+
+
+class TVHeadendMovedRecordingRepair:
+    def __init__(self, config: dict):
+        self.client = TVHeadendClient(config)
+
+    def repair(
+        self,
+        search_directories: list[Path],
+        dry_run: bool = False,
+    ) -> MovedRecordingRepairResult:
+        directories = self._usable_directories(search_directories)
+        result = MovedRecordingRepairResult()
+        response = self.client.get(
+            "/api/dvr/entry/grid_finished",
+            params={"limit": 999999, "sort": "start", "dir": "ASC"},
+            timeout=30,
+        )
+        response.raise_for_status()
+
+        for entry in response.json().get("entries", []):
+            filename = self._filename(entry)
+
+            if not filename:
+                continue
+
+            result.checked += 1
+            source = Path(filename)
+
+            if source.exists():
+                continue
+
+            result.missing += 1
+            destination = self._find_first(source.name, directories)
+
+            if destination is None:
+                result.not_found += 1
+                logger.warning("Moved TVHeadend recording not found: %s", source)
+                continue
+
+            result.found += 1
+
+            if dry_run:
+                logger.info(
+                    "Would update TVHeadend recording path: %s -> %s",
+                    source,
+                    destination,
+                )
+                continue
+
+            try:
+                update = self.client.post(
+                    "/api/dvr/entry/filemoved",
+                    data={"src": str(source), "dst": str(destination)},
+                    timeout=30,
+                )
+                update.raise_for_status()
+            except Exception as exc:
+                result.errors += 1
+                logger.error(
+                    "Failed to update TVHeadend recording path %s -> %s: %s",
+                    source,
+                    destination,
+                    exc,
+                )
+                continue
+
+            result.updated += 1
+            logger.info(
+                "Updated TVHeadend recording path: %s -> %s",
+                source,
+                destination,
+            )
+
+        return result
+
+    def _usable_directories(self, directories: list[Path]) -> list[Path]:
+        usable = []
+        seen = set()
+
+        for directory in directories:
+            directory = directory.expanduser()
+            key = str(directory.resolve())
+
+            if key in seen:
+                continue
+
+            seen.add(key)
+
+            if not directory.is_dir():
+                logger.warning("Search directory does not exist or is not a directory: %s", directory)
+                continue
+
+            usable.append(directory)
+
+        return usable
+
+    @staticmethod
+    def _find_first(filename: str, directories: list[Path]) -> Path | None:
+        for directory in directories:
+            for candidate in directory.rglob(escape(filename)):
+                if candidate.is_file():
+                    return candidate
+
+        return None
+
+    @staticmethod
+    def _filename(entry: dict) -> str:
+        if entry.get("filename"):
+            return str(entry["filename"])
+
+        files = entry.get("files") or []
+
+        if files and isinstance(files[0], dict):
+            return str(files[0].get("filename") or "")
+
+        return ""
 
 
 class TVHeadendStateMonitor:

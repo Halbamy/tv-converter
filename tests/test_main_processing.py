@@ -5,7 +5,7 @@ import sys
 from types import SimpleNamespace
 from types import ModuleType
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 try:
     import mysql.connector  # noqa: F401
@@ -17,6 +17,7 @@ except ModuleNotFoundError:
     sys.modules["mysql"] = mysql_module
     sys.modules["mysql.connector"] = mysql_connector_module
 
+import main as main_module
 from main import App
 from recording_queue import RecordingQueue
 
@@ -57,6 +58,28 @@ class AppProcessingTest(unittest.TestCase):
 
         app.plex.refresh.assert_called_once_with()
         app._delete_source_if_configured.assert_called_once_with(converted)
+
+
+class PlexCommandTest(unittest.TestCase):
+    def test_refresh_plex_calls_only_forced_plex_refresh(self):
+        config = {"postprocessing": {"plex": {"refresh_url": "https://plex/refresh"}}}
+        processor = Mock()
+        processor.refresh.return_value = True
+
+        with (
+            patch.object(sys, "argv", ["tv-converter", "--refresh-plex"]),
+            patch.object(main_module, "configure_logging"),
+            patch.object(main_module, "load_config", return_value=config) as load_config,
+            patch.object(main_module, "PlexPostprocessor", return_value=processor) as plex,
+            patch.object(main_module, "App") as app,
+        ):
+            result = main_module.main()
+
+        self.assertEqual(result, 0)
+        load_config.assert_called_once_with("config.yaml")
+        plex.assert_called_once_with(config["postprocessing"])
+        processor.refresh.assert_called_once_with(force=True)
+        app.assert_not_called()
 
 
 if __name__ == "__main__":

@@ -96,6 +96,30 @@ default:
 tv-converter --dry-run
 ```
 
+Moved TVHeadend recording paths can be repaired without starting the converter.
+The configured destination output directory is searched recursively first;
+additional directories are searched in the order given. Only missing paths are
+changed, and the first exact filename match is sent to
+`/api/dvr/entry/filemoved`:
+
+```bash
+tv-converter --repair-moved-recordings \
+  --search-directory /media/archive \
+  --search-directory /mnt/recordings
+```
+
+Use `--dry-run` to display the changes without updating TVHeadend.
+
+The configured Plex refresh URL can be called independently without starting
+the converter or processing its queue:
+
+```bash
+tv-converter --refresh-plex
+```
+
+This explicit command also performs the call when automatic Plex
+postprocessing is disabled.
+
 ```bash
 sudo systemctl edit tv-converter
 ```

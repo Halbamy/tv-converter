@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import signal
 import threading
+from pathlib import Path
 
 from config import destination_config, load_config, source_config
 from converter import Converter
@@ -12,7 +13,7 @@ from mqtt_controller import MQTTController, ServiceControl
 from postprocessing import PlexPostprocessor
 from recording_queue import RecordingQueue
 from sources import create_source
-from tvheadend import TVHeadendImporter, TVHeadendStateMonitor
+from tvheadend import TVHeadendImporter, TVHeadendMovedRecordingRepair, TVHeadendStateMonitor
 
 
 def filter_recordings(recordings, cfg):
@@ -299,7 +300,7 @@ class App:
             print(self.tvheadend.build_json(recording, dummy))
 
 
-def main():
+def main() -> int:
     configure_logging()
 
     parser = argparse.ArgumentParser(description="Convert TV recordings and import them into TVHeadend.")
@@ -307,11 +308,57 @@ def main():
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--show-ffmpeg", action="store_true")
     parser.add_argument("--show-tvh-json", action="store_true")
+    command = parser.add_mutually_exclusive_group()
+    command.add_argument(
+        "--repair-moved-recordings",
+        action="store_true",
+        help="repair missing TVHeadend recording paths using dvr/entry/filemoved",
+    )
+    command.add_argument(
+        "--refresh-plex",
+        action="store_true",
+        help="call the configured Plex refresh URL and exit",
+    )
+    parser.add_argument(
+        "--search-directory",
+        action="append",
+        default=[],
+        metavar="DIRECTORY",
+        help="additional directory to search recursively (repeatable)",
+    )
     args = parser.parse_args()
+
+    if args.search_directory and not args.repair_moved_recordings:
+        parser.error("--search-directory requires --repair-moved-recordings")
+
+    if args.refresh_plex:
+        config = load_config(args.config)
+        plex = PlexPostprocessor(config.get("postprocessing", {}))
+        return 0 if plex.refresh(force=True) else 1
+
+    if args.repair_moved_recordings:
+        config = load_config(args.config)
+        destination = destination_config(config)
+        directories = [Path(destination["output"]["directory"])]
+        directories.extend(Path(value) for value in args.search_directory)
+        repair = TVHeadendMovedRecordingRepair(destination)
+        result = repair.repair(directories, dry_run=args.dry_run)
+        logger.info(
+            "Moved recording repair completed "
+            "(checked=%s, missing=%s, found=%s, updated=%s, not_found=%s, errors=%s).",
+            result.checked,
+            result.missing,
+            result.found,
+            result.updated,
+            result.not_found,
+            result.errors,
+        )
+        return 1 if result.errors else 0
 
     app = App(args.config)
     app.run(args.dry_run, args.show_ffmpeg, args.show_tvh_json)
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

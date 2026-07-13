@@ -6,6 +6,10 @@
 
 - Existing destination MKVs are inspected for tv-converter metadata.
 - Legacy HEVC MKVs without metadata are upgraded through a metadata-only stream-copy remux.
+- Added `--repair-moved-recordings` with repeatable `--search-directory`
+  options to repair missing TVHeadend paths through `dvr/entry/filemoved`.
+- Added `--refresh-plex` to call the configured Plex refresh URL without
+  starting the converter.
 
 ### Changed
 
