@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import warnings
+
 import requests
+from urllib3.exceptions import InsecureRequestWarning
 
 from event_logger import logger
 
@@ -11,6 +14,7 @@ class PlexPostprocessor:
         self.enabled = bool(cfg.get("enabled", False))
         self.refresh_url = cfg.get("refresh_url")
         self.verify_ssl = bool(cfg.get("verify_ssl", False))
+        self.suppress_ssl_warning = bool(cfg.get("suppress_ssl_warning", False))
         self.timeout = int(cfg.get("timeout", 10))
 
     def refresh(self) -> bool:
@@ -22,11 +26,15 @@ class PlexPostprocessor:
             return False
 
         try:
-            response = requests.get(
-                self.refresh_url,
-                timeout=self.timeout,
-                verify=self.verify_ssl,
-            )
+            with warnings.catch_warnings():
+                if not self.verify_ssl and self.suppress_ssl_warning:
+                    warnings.simplefilter("ignore", InsecureRequestWarning)
+
+                response = requests.get(
+                    self.refresh_url,
+                    timeout=self.timeout,
+                    verify=self.verify_ssl,
+                )
             response.raise_for_status()
             logger.info("Plex refresh completed.")
             return True
