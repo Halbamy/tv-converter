@@ -133,11 +133,13 @@ class App:
         logger.info("%s new recording(s) found.", added)
 
     def _process_next(self, dry_run: bool, show_ffmpeg: bool, show_tvh_json: bool) -> None:
-        total = len(self.queue)
         recording = self.queue.pop()
 
         if recording is None:
             return
+
+        index = self.queue.current
+        total = self.queue.total
 
         if getattr(recording, "deletepending", False):
             logger.info("Skipping deletepending recording: %s", recording.title)
@@ -147,17 +149,17 @@ class App:
         plan = self.converter.prepare(recording)
 
         if dry_run:
-            self._print_plan(recording, plan, 1, total, show_ffmpeg, show_tvh_json)
+            self._print_plan(recording, plan, index, total, show_ffmpeg, show_tvh_json)
             return
 
         if plan.action in {"skip_processed", "manual_review"}:
-            self.converter.convert(recording, 1, total, plan)
+            self.converter.convert(recording, index, total, plan)
             return
 
         self.state_monitor.wait_until_not_busy()
 
         try:
-            converted = self.converter.convert(recording, 1, total, plan)
+            converted = self.converter.convert(recording, index, total, plan)
         except RuntimeError as exc:
             logger.error("%s", exc)
             self.control.stop_requested = True
@@ -194,7 +196,7 @@ class App:
             current_title=recording.title,
             progress=100,
             eta="00:00",
-            queue={"current": 1, "total": total},
+            queue={"current": index, "total": total},
         )
 
     def _delete_source_if_configured(self, converted) -> None:
