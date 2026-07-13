@@ -232,6 +232,13 @@ class App:
         if not bool(dst_cfg.get("delete_source_after_import", False)):
             return
 
+        if converted.source.source == "mythtv":
+            logger.info(
+                "Source deletion is disabled for MythTV recordings: %s",
+                converted.source.filename,
+            )
+            return
+
         source = converted.source.filename
         target = converted.output_file
 

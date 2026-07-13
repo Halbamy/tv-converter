@@ -16,6 +16,10 @@ WebSocket notifications are only wake-up signals. Events received during a
 conversion are coalesced into one pending source scan and processed after the
 current recording has completed its import and postprocessing flow.
 
+Source deletion is disabled for MythTV recordings so the converter cannot
+leave MythTV's database and related metadata in an inconsistent state.
+`delete_source_after_import` applies only to non-MythTV sources.
+
 ## Processing flow
 
 Each recording is completed before the next one starts:

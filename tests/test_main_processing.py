@@ -3,6 +3,7 @@ from __future__ import annotations
 from contextlib import redirect_stderr
 from io import StringIO
 from pathlib import Path
+from tempfile import TemporaryDirectory
 import sys
 from types import SimpleNamespace
 from types import ModuleType
@@ -61,6 +62,31 @@ class AppProcessingTest(unittest.TestCase):
 
         app.plex.refresh.assert_called_once_with()
         app._delete_source_if_configured.assert_called_once_with(converted)
+
+    def test_mythtv_source_deletion_is_disabled(self):
+        with TemporaryDirectory() as tmp:
+            source_file = Path(tmp) / "recording.ts"
+            output_file = Path(tmp) / "recording.mkv"
+            source_file.touch()
+            recording = SimpleNamespace(
+                source="mythtv",
+                recording_id="1234",
+                title="Recording",
+                filename=source_file,
+                deletepending=False,
+            )
+            converted = SimpleNamespace(source=recording, output_file=output_file)
+            app = App.__new__(App)
+            app.config = {
+                "destination": {
+                    "type": "tvheadend",
+                    "tvheadend": {"delete_source_after_import": True},
+                }
+            }
+
+            app._delete_source_if_configured(converted)
+
+            self.assertTrue(source_file.exists())
 
 
 class PlexCommandTest(unittest.TestCase):
