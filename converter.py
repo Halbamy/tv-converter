@@ -77,7 +77,12 @@ class Converter:
                 plan.output_file.name,
             )
         else:
-            logger.info("Starting conversion: %s", plan.output_file.name)
+            logger.info(
+                "Starting conversion: %s (encoder=%s, profile=%s)",
+                plan.output_file.name,
+                plan.encoder_name,
+                plan.media.profile.name,
+            )
         self._start_status_thread()
 
         try:
