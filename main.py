@@ -183,8 +183,7 @@ class App:
 
         plex_ok = self.plex.refresh()
         if not plex_ok:
-            logger.error("Plex refresh failed. Source file will not be deleted.")
-            return
+            logger.error("Plex refresh failed. Continuing with source file deletion.")
 
         self._delete_source_if_configured(converted)
         self.mqtt.publish_runtime_status(

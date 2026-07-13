@@ -25,8 +25,8 @@ Each recording is completed before the next one starts:
 3. Wait until TVHeadend is idle again.
 4. Update the destination TVHeadend instance.
 5. Refresh Plex when configured.
-6. Delete the source only when `delete_source_after_import` is enabled and all
-   preceding steps succeeded.
+6. Delete the source when `delete_source_after_import` is enabled and the
+   TVHeadend import succeeded. A failed Plex refresh does not prevent deletion.
 
 When the TVHeadend source and destination URLs refer to the same instance,
 `/api/dvr/entry/filemoved` updates the existing DVR entry. Otherwise a new DVR

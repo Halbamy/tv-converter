@@ -11,6 +11,8 @@
 
 - MKVs whose `encoded_by` tag starts with `tv-converter` are skipped as already processed.
 - An existing MKV that cannot be analyzed is left untouched and reported with a warning for manual review.
+- A failed Plex refresh no longer prevents configured source file deletion after
+  a successful TVHeadend import.
 
 ## [2.3.0]
 
