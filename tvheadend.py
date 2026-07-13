@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import time
+from collections.abc import Callable
 from urllib.parse import urlsplit, urlunsplit
 
 from event_logger import logger
@@ -15,12 +16,25 @@ class TVHeadendStateMonitor:
         self.poll_interval = poll_interval
         self.client = TVHeadendClient(config)
 
-    def wait_until_not_busy(self) -> None:
+    def wait_until_not_busy(
+        self,
+        on_busy: Callable[[int, int], None] | None = None,
+        on_ready: Callable[[], None] | None = None,
+    ) -> None:
+        waited = False
+
         while True:
             recordings, subscriptions = self.busy_counts()
 
             if recordings == 0 and subscriptions == 0:
+                if waited and on_ready is not None:
+                    on_ready()
                 return
+
+            waited = True
+
+            if on_busy is not None:
+                on_busy(recordings, subscriptions)
 
             logger.info(
                 "TVHeadend busy (recordings=%s, subscriptions=%s), waiting %s seconds.",

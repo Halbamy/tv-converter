@@ -156,7 +156,7 @@ class App:
             self.converter.convert(recording, index, total, plan)
             return
 
-        self.state_monitor.wait_until_not_busy()
+        self._wait_until_tvh_not_busy()
 
         try:
             converted = self.converter.convert(recording, index, total, plan)
@@ -168,7 +168,7 @@ class App:
         if converted is None:
             return
 
-        self.state_monitor.wait_until_not_busy()
+        self._wait_until_tvh_not_busy()
         import_ok = self.tvheadend.import_recording(recording, converted)
 
         if not import_ok:
@@ -197,6 +197,25 @@ class App:
             progress=100,
             eta="00:00",
             queue={"current": index, "total": total},
+        )
+
+    def _wait_until_tvh_not_busy(self) -> None:
+        def publish_busy(recordings: int, subscriptions: int) -> None:
+            self.mqtt.publish_runtime_status(
+                state="paused (tvh busy)",
+                tvh={"recordings": recordings, "subscriptions": subscriptions},
+                queue={"current": self.queue.current, "total": self.queue.total},
+            )
+
+        def publish_ready() -> None:
+            self.mqtt.publish_runtime_status(
+                state=self.mqtt.state.state.lower(),
+                queue={"current": self.queue.current, "total": self.queue.total},
+            )
+
+        self.state_monitor.wait_until_not_busy(
+            on_busy=publish_busy,
+            on_ready=publish_ready,
         )
 
     def _delete_source_if_configured(self, converted) -> None:
