@@ -205,24 +205,19 @@ sudo systemctl restart tv-converter
 
 ## Bash completion
 
-Bash autocompletion is available for the `tv-converter` command. To enable it:
+Bash autocompletion is automatically installed when using the Debian package.
+The completion script is installed to `/etc/bash_completion.d/tv-converter` and
+will be automatically sourced by your shell.
 
-### Automatic installation (recommended)
-
-The `register-python-argcomplete` utility (installed with argcomplete) can be used
-to register completion:
-
-```bash
-sudo register-python-argcomplete tv-converter
-```
-
-Or manually for a single user:
+After installation, reload your shell or run:
 
 ```bash
-register-python-argcomplete --user tv-converter
+source /etc/bash_completion.d/tv-converter
 ```
 
-### Manual installation
+### Manual setup (for manual installation or development)
+
+If you installed tv-converter manually or want to enable completion in development:
 
 Add this line to your `~/.bashrc` file:
 
@@ -241,6 +236,9 @@ Then reload your shell:
 ```bash
 exec bash
 ```
+
+The completion script requires argcomplete (installed as a dependency) and will automatically
+use the venv-installed Python when available.
 
 ## Tests
 

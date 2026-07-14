@@ -51,9 +51,13 @@ find "$ROOT_DIR" -maxdepth 1 -type f \( \
     -name 'config.yaml.example' -o \
     -name 'README.md' -o \
     -name 'LICENSE' -o \
-    -name 'CHANGELOG.md' -o \
-    -name 'tv-converter-completion.bash' \
+    -name 'CHANGELOG.md' \
 \) -exec cp {} "$BUILD_DIR/var/lib/tv-converter/" \;
+
+# Copy bash completion script separately
+if [ -f "$ROOT_DIR/tv-converter-completion.bash" ]; then
+    cp "$ROOT_DIR/tv-converter-completion.bash" "$BUILD_DIR/var/lib/tv-converter/"
+fi
 
 cp -a "$ROOT_DIR/sources" "$BUILD_DIR/var/lib/tv-converter/sources"
 cp "$ROOT_DIR/packaging/tv-converter" "$BUILD_DIR/var/lib/tv-converter/tv-converter"
