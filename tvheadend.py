@@ -460,12 +460,17 @@ class TVHeadendRecordingRenamer:
 
         filename = TVHeadendRecordingRenamer._filename(entry)
         
+        # Extract language-specific strings from dictionaries
+        title = TVHeadendRecordingRenamer._extract_text(entry.get("title"), "Unknown")
+        subtitle = TVHeadendRecordingRenamer._extract_text(entry.get("subtitle"), "")
+        description = TVHeadendRecordingRenamer._extract_text(entry.get("description"), "")
+        
         return Recording(
             source="tvheadend",
             recording_id=str(entry.get("uuid", entry.get("id", "unknown"))),
-            title=str(entry.get("title", "Unknown")),
-            subtitle=str(entry.get("subtitle", "")),
-            description=str(entry.get("description", "")),
+            title=title,
+            subtitle=subtitle,
+            description=description,
             channel=str(entry.get("channelname", "")),
             starttime=datetime.fromtimestamp(int(entry.get("start", 0))),
             endtime=datetime.fromtimestamp(int(entry.get("stop", 0))),
@@ -473,6 +478,34 @@ class TVHeadendRecordingRenamer:
             duration_minutes=int((int(entry.get("stop", 0)) - int(entry.get("start", 0))) / 60),
             deletepending=bool(entry.get("fileremoved", False)),
         )
+
+    @staticmethod
+    def _extract_text(value: dict | str | None, default: str = "") -> str:
+        """Extract text value, handling language-specific dictionaries.
+        
+        TVHeadend may return values as:
+        - String: use directly
+        - Dict with language keys (e.g., {"ger": "...", "eng": "..."}): extract language-specific value
+        - None: use default
+        """
+        if value is None:
+            return default
+        
+        if isinstance(value, str):
+            return value
+        
+        if isinstance(value, dict):
+            # Prefer German, fall back to English, then any available value
+            if "ger" in value:
+                return str(value["ger"])
+            if "eng" in value:
+                return str(value["eng"])
+            # Fall back to first available value
+            for lang_value in value.values():
+                if lang_value:
+                    return str(lang_value)
+        
+        return default
 
 
 class TVHeadendRecordingSearcher:
@@ -509,9 +542,10 @@ class TVHeadendRecordingSearcher:
             entry_json = json.dumps(entry, ensure_ascii=False).lower()
             
             if search_lower in entry_json:
+                title = TVHeadendRecordingRenamer._extract_text(entry.get("title"), "Unknown")
                 results.append({
                     "uuid": str(entry.get("uuid", entry.get("id", "unknown"))),
-                    "title": str(entry.get("title", "Unknown")),
+                    "title": title,
                     "start": int(entry.get("start", 0)),
                     "stop": int(entry.get("stop", 0)),
                     "channelname": str(entry.get("channelname", "")),
