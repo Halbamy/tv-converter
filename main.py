@@ -5,6 +5,7 @@ import argparse
 import signal
 import sys
 import threading
+from datetime import datetime
 from pathlib import Path
 
 from config import ConfigError, destination_config, load_config, source_config
@@ -14,7 +15,7 @@ from mqtt_controller import MQTTController, ServiceControl
 from postprocessing import PlexPostprocessor
 from recording_queue import RecordingQueue
 from sources import create_source
-from tvheadend import TVHeadendImporter, TVHeadendMovedRecordingRepair, TVHeadendStateMonitor, TVHeadendRecordingRenamer
+from tvheadend import TVHeadendImporter, TVHeadendMovedRecordingRepair, TVHeadendStateMonitor, TVHeadendRecordingRenamer, TVHeadendRecordingSearcher
 
 
 def filter_recordings(recordings, cfg):
@@ -328,6 +329,11 @@ def main() -> int:
         help="rename all completed TVHeadend recordings to the current naming schema",
     )
     command.add_argument(
+        "--search-recordings",
+        action="store_true",
+        help="search TVHeadend recordings by substring",
+    )
+    command.add_argument(
         "--refresh-plex",
         action="store_true",
         help="call the configured Plex refresh URL and exit",
@@ -337,6 +343,17 @@ def main() -> int:
         default=None,
         metavar="UUID",
         help="when used with --rename-recordings, rename only the recording with this UUID",
+    )
+    parser.add_argument(
+        "--search",
+        default=None,
+        metavar="STRING",
+        help="substring to search for (use with --search-recordings)",
+    )
+    parser.add_argument(
+        "--upcoming",
+        action="store_true",
+        help="when used with --search-recordings, search upcoming recordings instead of finished",
     )
     parser.add_argument(
         "--search-directory",
@@ -355,6 +372,40 @@ def main() -> int:
             config = load_config(args.config)
             plex = PlexPostprocessor(config.get("postprocessing", {}))
             return 0 if plex.refresh(force=True) else 1
+
+        if args.search_recordings:
+            if not args.search:
+                parser.error("--search-recordings requires --search")
+
+            config = load_config(args.config)
+            destination = destination_config(config)
+            tvheadend_config = destination.get("tvheadend", {})
+            
+            if not tvheadend_config.get("enabled", False):
+                logger.error("TVHeadend is not enabled in configuration")
+                return 1
+            
+            searcher = TVHeadendRecordingSearcher(tvheadend_config)
+            results = searcher.search(args.search, search_finished=not args.upcoming)
+            
+            if not results:
+                print("No recordings found matching search criteria.")
+                return 0
+            
+            print(f"\nFound {len(results)} recording(s) matching '{args.search}':\n")
+            for result in results:
+                start_time = datetime.fromtimestamp(result["start"]).strftime("%Y-%m-%d %H:%M:%S")
+                stop_time = datetime.fromtimestamp(result["stop"]).strftime("%Y-%m-%d %H:%M:%S")
+                print(f"UUID: {result['uuid']}")
+                print(f"  Title: {result['title']}")
+                print(f"  Channel: {result['channelname']}")
+                print(f"  Start: {start_time}")
+                print(f"  Stop: {stop_time}")
+                if result['filename']:
+                    print(f"  File: {result['filename']}")
+                print()
+            
+            return 0
 
         if args.rename_recordings:
             config = load_config(args.config)

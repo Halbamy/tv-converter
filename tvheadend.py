@@ -473,3 +473,82 @@ class TVHeadendRecordingRenamer:
             duration_minutes=int((int(entry.get("stop", 0)) - int(entry.get("start", 0))) / 60),
             deletepending=bool(entry.get("fileremoved", False)),
         )
+
+
+class TVHeadendRecordingSearcher:
+    """Search for TVHeadend recordings by substring in JSON entries."""
+
+    def __init__(self, config: dict):
+        self.config = config or {}
+        self.client = TVHeadendClient(config)
+
+    def search(self, search_string: str, search_finished: bool = True) -> list[dict]:
+        """Search for recordings by substring in JSON entry.
+        
+        Args:
+            search_string: Substring to search for (case-insensitive)
+            search_finished: If True, search finished recordings; if False, search upcoming
+            
+        Returns:
+            List of matching entries with UUID and basic info
+        """
+        search_lower = search_string.lower()
+        
+        try:
+            if search_finished:
+                entries = self._get_finished_entries()
+            else:
+                entries = self._get_upcoming_entries()
+        except Exception as exc:
+            logger.error("Failed to fetch TVHeadend recordings: %s", exc)
+            return []
+
+        results = []
+        for entry in entries:
+            # Convert entire entry to JSON string for searching
+            entry_json = json.dumps(entry, ensure_ascii=False).lower()
+            
+            if search_lower in entry_json:
+                results.append({
+                    "uuid": str(entry.get("uuid", entry.get("id", "unknown"))),
+                    "title": str(entry.get("title", "Unknown")),
+                    "start": int(entry.get("start", 0)),
+                    "stop": int(entry.get("stop", 0)),
+                    "channelname": str(entry.get("channelname", "")),
+                    "filename": self._filename(entry),
+                })
+
+        return results
+
+    def _get_finished_entries(self) -> list[dict]:
+        """Fetch all finished/completed recordings from TVHeadend."""
+        response = self.client.get(
+            "/api/dvr/entry/grid_finished",
+            params={"limit": 999999, "sort": "start", "dir": "ASC"},
+            timeout=30,
+        )
+        response.raise_for_status()
+        return list(response.json().get("entries", []))
+
+    def _get_upcoming_entries(self) -> list[dict]:
+        """Fetch all upcoming/recording entries from TVHeadend."""
+        response = self.client.get(
+            "/api/dvr/entry/grid_upcoming",
+            params={"limit": 999999, "sort": "start", "dir": "ASC"},
+            timeout=30,
+        )
+        response.raise_for_status()
+        return list(response.json().get("entries", []))
+
+    @staticmethod
+    def _filename(entry: dict) -> str:
+        """Extract filename from TVHeadend entry."""
+        if entry.get("filename"):
+            return str(entry["filename"])
+
+        files = entry.get("files") or []
+
+        if files and isinstance(files[0], dict):
+            return str(files[0].get("filename") or "")
+
+        return ""

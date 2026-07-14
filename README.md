@@ -1,4 +1,4 @@
-# tv-converter v2.3.1
+# tv-converter v2.3.6
 
 `tv-converter` converts recordings from MythTV or TVHeadend and imports the
 result into TVHeadend.
@@ -35,6 +35,18 @@ Each recording is completed before the next one starts:
 When the TVHeadend source and destination URLs refer to the same instance,
 `/api/dvr/entry/filemoved` updates the existing DVR entry. Otherwise a new DVR
 entry is created with `/api/dvr/entry/create`.
+
+## Output file naming
+
+Output files are named according to the pattern: `{title}_{subtitle/description}_YYYYMMDD_hhmm.mkv`
+
+Examples:
+- `Tatort_Mord_20260714_2030.mkv`
+- `Die_Sendung_Ohne_Untertitel_20260714_2100.mkv`
+
+The subtitle field is used if available; otherwise the first 25 characters of
+the description are used. If neither is available, "ohne_Untertitel" is used.
+Invalid filename characters are sanitized automatically.
 
 ## Existing MKV detection
 
@@ -115,6 +127,34 @@ tv-converter --repair-moved-recordings \
 ```
 
 Use `--dry-run` to display the changes without updating TVHeadend.
+
+Search for TVHeadend recordings by substring without starting the converter:
+
+```bash
+tv-converter --search-recordings --search "Tatort"
+```
+
+Use `--upcoming` to search upcoming recordings instead of finished ones:
+
+```bash
+tv-converter --search-recordings --search "Tatort" --upcoming
+```
+
+The search output displays the UUID, title, channel, timestamps, and filename.
+The UUID can be used with `--rename-recordings --uuid "..."`.
+
+Rename completed TVHeadend recordings to the current naming schema and notify
+TVHeadend about the file moves:
+
+```bash
+tv-converter --rename-recordings --dry-run
+```
+
+To rename only a specific recording by UUID:
+
+```bash
+tv-converter --rename-recordings --uuid "12345678-1234-1234-1234-123456789abc"
+```
 
 The configured Plex refresh URL can be called independently without starting
 the converter or processing its queue:
