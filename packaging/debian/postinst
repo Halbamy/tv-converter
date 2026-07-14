@@ -70,5 +70,13 @@ if command -v systemctl >/dev/null 2>&1; then
     fi
 fi
 
+# Install bash completion
+if command -v register-python-argcomplete >/dev/null 2>&1; then
+    register-python-argcomplete tv-converter || true
+elif [ -f /var/lib/tv-converter/tv-converter-completion.bash ]; then
+    install -D -m 0644 /var/lib/tv-converter/tv-converter-completion.bash \
+        /etc/bash_completion.d/tv-converter || true
+fi
+
 db_stop
 exit 0

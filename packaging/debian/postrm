@@ -4,6 +4,7 @@ set -e
 case "$1" in
     remove|purge)
         rm -f /etc/systemd/system/tv-converter.service
+        rm -f /etc/bash_completion.d/tv-converter
         if command -v systemctl >/dev/null 2>&1; then
             systemctl daemon-reload || true
         fi

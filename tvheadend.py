@@ -586,3 +586,171 @@ class TVHeadendRecordingSearcher:
             return str(files[0].get("filename") or "")
 
         return ""
+
+
+class TVHeadendRecordingTranscoder:
+    """Transcode a specific TVHeadend recording by UUID."""
+
+    def __init__(self, config: dict):
+        self.config = config or {}
+        self.client = TVHeadendClient(config)
+
+    def get_recording_by_uuid(self, uuid: str) -> Recording | None:
+        """Fetch a specific TVHeadend recording by UUID and return as Recording object.
+        
+        Args:
+            uuid: TVHeadend recording UUID
+            
+        Returns:
+            Recording object if found, None otherwise
+        """
+        try:
+            # Try finished recordings first
+            entries = self._get_finished_entries()
+            for entry in entries:
+                if str(entry.get("uuid", entry.get("id", ""))).strip() == uuid.strip():
+                    return TVHeadendRecordingRenamer._entry_to_recording(entry)
+            
+            # If not found in finished, try upcoming
+            entries = self._get_upcoming_entries()
+            for entry in entries:
+                if str(entry.get("uuid", entry.get("id", ""))).strip() == uuid.strip():
+                    return TVHeadendRecordingRenamer._entry_to_recording(entry)
+            
+            logger.warning("TVHeadend recording not found with UUID: %s", uuid)
+            return None
+        except Exception as exc:
+            logger.error("Failed to fetch TVHeadend recording with UUID %s: %s", uuid, exc)
+            return None
+
+    def _get_finished_entries(self) -> list[dict]:
+        """Fetch all finished/completed recordings from TVHeadend."""
+        response = self.client.get(
+            "/api/dvr/entry/grid_finished",
+            params={"limit": 999999, "sort": "start", "dir": "ASC"},
+            timeout=30,
+        )
+        response.raise_for_status()
+        return list(response.json().get("entries", []))
+
+    def _get_upcoming_entries(self) -> list[dict]:
+        """Fetch all upcoming/recording entries from TVHeadend."""
+        response = self.client.get(
+            "/api/dvr/entry/grid_upcoming",
+            params={"limit": 999999, "sort": "start", "dir": "ASC"},
+            timeout=30,
+        )
+        response.raise_for_status()
+        return list(response.json().get("entries", []))
+
+
+class TVHeadendRecordingTranscoder:
+    """Transcode a specific TVHeadend recording by UUID."""
+
+    def __init__(self, config: dict):
+        self.config = config or {}
+        self.client = TVHeadendClient(config)
+
+    def get_recording_by_uuid(self, uuid: str) -> Recording | None:
+        """Fetch a specific TVHeadend recording by UUID and return as Recording object.
+        
+        Args:
+            uuid: TVHeadend recording UUID
+            
+        Returns:
+            Recording object if found, None otherwise
+        """
+        try:
+            # Try finished recordings first
+            entries = self._get_finished_entries()
+            for entry in entries:
+                if str(entry.get("uuid", entry.get("id", ""))).strip() == uuid.strip():
+                    return TVHeadendRecordingRenamer._entry_to_recording(entry)
+            
+            # If not found in finished, try upcoming
+            entries = self._get_upcoming_entries()
+            for entry in entries:
+                if str(entry.get("uuid", entry.get("id", ""))).strip() == uuid.strip():
+                    return TVHeadendRecordingRenamer._entry_to_recording(entry)
+            
+            logger.warning("TVHeadend recording not found with UUID: %s", uuid)
+            return None
+        except Exception as exc:
+            logger.error("Failed to fetch TVHeadend recording with UUID %s: %s", uuid, exc)
+            return None
+
+    def _get_finished_entries(self) -> list[dict]:
+        """Fetch all finished/completed recordings from TVHeadend."""
+        response = self.client.get(
+            "/api/dvr/entry/grid_finished",
+            params={"limit": 999999, "sort": "start", "dir": "ASC"},
+            timeout=30,
+        )
+        response.raise_for_status()
+        return list(response.json().get("entries", []))
+
+    def _get_upcoming_entries(self) -> list[dict]:
+        """Fetch all upcoming/recording entries from TVHeadend."""
+        response = self.client.get(
+            "/api/dvr/entry/grid_upcoming",
+            params={"limit": 999999, "sort": "start", "dir": "ASC"},
+            timeout=30,
+        )
+        response.raise_for_status()
+        return list(response.json().get("entries", []))
+
+
+class TVHeadendRecordingTranscoder:
+    """Transcode a specific TVHeadend recording by UUID."""
+
+    def __init__(self, config: dict):
+        self.config = config or {}
+        self.client = TVHeadendClient(config)
+
+    def get_recording_by_uuid(self, uuid: str) -> Recording | None:
+        """Fetch a specific TVHeadend recording by UUID and return as Recording object.
+        
+        Args:
+            uuid: TVHeadend recording UUID
+            
+        Returns:
+            Recording object if found, None otherwise
+        """
+        try:
+            # Try finished recordings first
+            entries = self._get_finished_entries()
+            for entry in entries:
+                if str(entry.get("uuid", entry.get("id", ""))).strip() == uuid.strip():
+                    return TVHeadendRecordingRenamer._entry_to_recording(entry)
+            
+            # If not found in finished, try upcoming
+            entries = self._get_upcoming_entries()
+            for entry in entries:
+                if str(entry.get("uuid", entry.get("id", ""))).strip() == uuid.strip():
+                    return TVHeadendRecordingRenamer._entry_to_recording(entry)
+            
+            logger.warning("TVHeadend recording not found with UUID: %s", uuid)
+            return None
+        except Exception as exc:
+            logger.error("Failed to fetch TVHeadend recording with UUID %s: %s", uuid, exc)
+            return None
+
+    def _get_finished_entries(self) -> list[dict]:
+        """Fetch all finished/completed recordings from TVHeadend."""
+        response = self.client.get(
+            "/api/dvr/entry/grid_finished",
+            params={"limit": 999999, "sort": "start", "dir": "ASC"},
+            timeout=30,
+        )
+        response.raise_for_status()
+        return list(response.json().get("entries", []))
+
+    def _get_upcoming_entries(self) -> list[dict]:
+        """Fetch all upcoming/recording entries from TVHeadend."""
+        response = self.client.get(
+            "/api/dvr/entry/grid_upcoming",
+            params={"limit": 999999, "sort": "start", "dir": "ASC"},
+            timeout=30,
+        )
+        response.raise_for_status()
+        return list(response.json().get("entries", []))

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import argcomplete
 import argparse
 import signal
 import sys
@@ -15,7 +16,7 @@ from mqtt_controller import MQTTController, ServiceControl
 from postprocessing import PlexPostprocessor
 from recording_queue import RecordingQueue
 from sources import create_source
-from tvheadend import TVHeadendImporter, TVHeadendMovedRecordingRepair, TVHeadendStateMonitor, TVHeadendRecordingRenamer, TVHeadendRecordingSearcher
+from tvheadend import TVHeadendImporter, TVHeadendMovedRecordingRepair, TVHeadendStateMonitor, TVHeadendRecordingRenamer, TVHeadendRecordingSearcher, TVHeadendRecordingTranscoder
 
 
 def filter_recordings(recordings, cfg):
@@ -334,6 +335,11 @@ def main() -> int:
         help="search TVHeadend recordings by substring",
     )
     command.add_argument(
+        "--transcode",
+        action="store_true",
+        help="transcode a specific TVHeadend recording (requires --uuid)",
+    )
+    command.add_argument(
         "--refresh-plex",
         action="store_true",
         help="call the configured Plex refresh URL and exit",
@@ -362,6 +368,7 @@ def main() -> int:
         metavar="DIRECTORY",
         help="additional directory to search recursively (repeatable)",
     )
+    argcomplete.autocomplete(parser)
     args = parser.parse_args()
 
     if args.search_directory and not args.repair_moved_recordings:
@@ -426,6 +433,82 @@ def main() -> int:
                 result.errors,
             )
             return 1 if result.errors else 0
+
+        if args.transcode:
+            if not args.uuid:
+                parser.error("--transcode requires --uuid")
+
+            config = load_config(args.config)
+            tvheadend_config = destination_config(config)
+            
+            if not tvheadend_config.get("enabled", False):
+                logger.error("TVHeadend is not enabled in configuration")
+                return 1
+            
+            transcoder = TVHeadendRecordingTranscoder(tvheadend_config)
+            recording = transcoder.get_recording_by_uuid(args.uuid)
+            
+            if not recording:
+                logger.error("Could not fetch recording with UUID: %s", args.uuid)
+                return 1
+            
+            if not recording.filename.exists():
+                logger.error("Recording file does not exist: %s", recording.filename)
+                return 1
+            
+            logger.info("Starting single recording transcode: %s", recording.title)
+            
+            # Create a minimal MQTT controller and converter instance
+            mqtt = MQTTController(config.get("mqtt", {}), lambda: None, ServiceControl())
+            converter = Converter(config, mqtt)
+            
+            plan = converter.prepare(recording)
+            
+            if args.dry_run:
+                print("-" * 60)
+                print(f"[UUID: {recording.recording_id}] {recording.starttime} | {recording.title}")
+                print(f"Input: {recording.filename}")
+                print(f"Output: {plan.output_file}")
+                
+                if plan.media is not None and plan.action not in {"skip_processed", "manual_review"}:
+                    print(
+                        f"Video: {plan.media.video_codec} "
+                        f"{plan.media.width}x{plan.media.height} -> {plan.encoder_name}"
+                    )
+                    print(f"Audio: stream {plan.media.audio_stream_index} {plan.media.audio_codec}")
+                    print(f"Profile: {plan.media.profile.name}")
+                elif plan.action == "skip_processed":
+                    print("Mode: already processed by tv-converter (skip)")
+                elif plan.action == "manual_review":
+                    print("Mode: manual review required (skip)")
+                    print(f"Reason: {plan.message}")
+                
+                return 0
+            
+            try:
+                mqtt.start()
+                converted = converter.convert(recording, 1, 1, plan)
+                mqtt.stop()
+                
+                if converted is None:
+                    logger.warning("Transcoding did not produce output")
+                    return 1
+                
+                # Notify TVHeadend about the new import
+                try:
+                    tvheadend = TVHeadendImporter(tvheadend_config, None)
+                    if tvheadend.import_recording(recording, converted):
+                        logger.info("Successfully imported converted recording to TVHeadend")
+                    else:
+                        logger.warning("TVHeadend import failed or was skipped")
+                except Exception as exc:
+                    logger.warning("Could not import recording to TVHeadend: %s", exc)
+                
+                logger.info("Recording transcode completed successfully: %s", recording.title)
+                return 0
+            except Exception as exc:
+                logger.error("Transcoding failed: %s", exc)
+                return 1
 
         if args.repair_moved_recordings:
             config = load_config(args.config)

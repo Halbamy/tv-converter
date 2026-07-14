@@ -1,4 +1,4 @@
-# tv-converter v2.3.6
+# tv-converter v2.3.7
 
 `tv-converter` converts recordings from MythTV or TVHeadend and imports the
 result into TVHeadend.
@@ -156,6 +156,22 @@ To rename only a specific recording by UUID:
 tv-converter --rename-recordings --uuid "12345678-1234-1234-1234-123456789abc"
 ```
 
+Transcode a specific TVHeadend recording by UUID:
+
+```bash
+tv-converter --transcode --uuid "12345678-1234-1234-1234-123456789abc"
+```
+
+Use `--dry-run` to preview the transcode plan without starting the conversion:
+
+```bash
+tv-converter --transcode --uuid "12345678-1234-1234-1234-123456789abc" --dry-run
+```
+
+The recording is fetched from TVHeadend by UUID, converted using the configured
+encoder, and imported back into TVHeadend. The source file may be deleted
+depending on the `delete_source_after_import` setting.
+
 The configured Plex refresh URL can be called independently without starting
 the converter or processing its queue:
 
@@ -185,6 +201,45 @@ Then reload and restart:
 ```bash
 sudo systemctl daemon-reload
 sudo systemctl restart tv-converter
+```
+
+## Bash completion
+
+Bash autocompletion is available for the `tv-converter` command. To enable it:
+
+### Automatic installation (recommended)
+
+The `register-python-argcomplete` utility (installed with argcomplete) can be used
+to register completion:
+
+```bash
+sudo register-python-argcomplete tv-converter
+```
+
+Or manually for a single user:
+
+```bash
+register-python-argcomplete --user tv-converter
+```
+
+### Manual installation
+
+Add this line to your `~/.bashrc` file:
+
+```bash
+source /path/to/tv-converter-completion.bash
+```
+
+Or install to `/etc/bash_completion.d/`:
+
+```bash
+sudo cp tv-converter-completion.bash /etc/bash_completion.d/tv-converter
+```
+
+Then reload your shell:
+
+```bash
+exec bash
 ```
 
 ## Tests
