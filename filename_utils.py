@@ -36,7 +36,7 @@ def build_output_filename(
     description_fallback_chars: int = 25,
     suffix: str = ".mkv",
 ) -> Path:
-    start = recording.starttime.strftime("%Y-%m-%d_%H_%M_%S")
+    start = recording.starttime.strftime("%Y%m%d_%H%M")
     title = sanitize_filename_part(recording.title)
     subtitle_source = recording.subtitle.strip()
 
@@ -49,4 +49,4 @@ def build_output_filename(
     subtitle = sanitize_filename_part(subtitle_source)
     suffix = suffix if suffix.startswith(".") else "." + suffix
 
-    return output_dir / f"{start}_{title}_{subtitle}{suffix}"
+    return output_dir / f"{title}_{subtitle}_{start}{suffix}"
