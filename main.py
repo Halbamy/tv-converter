@@ -378,8 +378,7 @@ def main() -> int:
                 parser.error("--search-recordings requires --search")
 
             config = load_config(args.config)
-            destination = destination_config(config)
-            tvheadend_config = destination.get("tvheadend", {})
+            tvheadend_config = destination_config(config)
             
             if not tvheadend_config.get("enabled", False):
                 logger.error("TVHeadend is not enabled in configuration")
@@ -409,14 +408,13 @@ def main() -> int:
 
         if args.rename_recordings:
             config = load_config(args.config)
-            destination = destination_config(config)
-            tvheadend_config = destination.get("tvheadend", {})
+            tvheadend_config = destination_config(config)
             
             if not tvheadend_config.get("enabled", False):
                 logger.error("TVHeadend is not enabled in configuration")
                 return 1
             
-            output_dir = Path(destination["output"]["directory"])
+            output_dir = Path(tvheadend_config["output"]["directory"])
             renamer = TVHeadendRecordingRenamer(tvheadend_config)
             result = renamer.rename_recordings(config, output_dir, uuid=args.uuid, dry_run=args.dry_run)
             logger.info(
