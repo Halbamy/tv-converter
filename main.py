@@ -14,7 +14,7 @@ from mqtt_controller import MQTTController, ServiceControl
 from postprocessing import PlexPostprocessor
 from recording_queue import RecordingQueue
 from sources import create_source
-from tvheadend import TVHeadendImporter, TVHeadendMovedRecordingRepair, TVHeadendStateMonitor
+from tvheadend import TVHeadendImporter, TVHeadendMovedRecordingRepair, TVHeadendStateMonitor, TVHeadendRecordingRenamer
 
 
 def filter_recordings(recordings, cfg):
@@ -323,9 +323,20 @@ def main() -> int:
         help="repair missing TVHeadend recording paths using dvr/entry/filemoved",
     )
     command.add_argument(
+        "--rename-recordings",
+        action="store_true",
+        help="rename all completed TVHeadend recordings to the current naming schema",
+    )
+    command.add_argument(
         "--refresh-plex",
         action="store_true",
         help="call the configured Plex refresh URL and exit",
+    )
+    parser.add_argument(
+        "--uuid",
+        default=None,
+        metavar="UUID",
+        help="when used with --rename-recordings, rename only the recording with this UUID",
     )
     parser.add_argument(
         "--search-directory",
@@ -344,6 +355,28 @@ def main() -> int:
             config = load_config(args.config)
             plex = PlexPostprocessor(config.get("postprocessing", {}))
             return 0 if plex.refresh(force=True) else 1
+
+        if args.rename_recordings:
+            config = load_config(args.config)
+            destination = destination_config(config)
+            tvheadend_config = destination.get("tvheadend", {})
+            
+            if not tvheadend_config.get("enabled", False):
+                logger.error("TVHeadend is not enabled in configuration")
+                return 1
+            
+            output_dir = Path(destination["output"]["directory"])
+            renamer = TVHeadendRecordingRenamer(tvheadend_config)
+            result = renamer.rename_recordings(config, output_dir, uuid=args.uuid, dry_run=args.dry_run)
+            logger.info(
+                "Recording rename completed "
+                "(checked=%s, renamed=%s, skipped=%s, errors=%s).",
+                result.checked,
+                result.renamed,
+                result.skipped,
+                result.errors,
+            )
+            return 1 if result.errors else 0
 
         if args.repair_moved_recordings:
             config = load_config(args.config)

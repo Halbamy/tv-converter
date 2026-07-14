@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 import subprocess
 
 from config import destination_config, is_verbose
+from event_logger import logger
 from ffprobe_utils import inspect_existing_output, media_info
 from filename_utils import build_output_filename
 from models import EncodingPlan, MediaInfo, Recording, VERSION
+from tvheadend_client import TVHeadendClient
 
 
 class Encoder:
@@ -109,6 +112,46 @@ class Encoder:
             return True
         except Exception:
             return False
+
+    def _matches_old_format(self, filename: str) -> bool:
+        """Check if filename matches old format: YYYY-MM-DD_HH_MM_SS_..."""
+        # Pattern: starts with YYYY-MM-DD_HH_MM_SS_
+        pattern = r"^\d{4}-\d{2}-\d{2}_\d{2}_\d{2}_\d{2}_"
+        return bool(re.match(pattern, filename))
+
+    def _rename_to_new_format(self, old_path: Path, new_path: Path) -> bool:
+        """Rename file from old format to new format and notify TVHeadend."""
+        if not old_path.exists():
+            return False
+
+        if old_path.resolve() == new_path.resolve():
+            # Already has correct path
+            return False
+
+        try:
+            old_path.rename(new_path)
+            logger.info("Renamed recording: %s -> %s", old_path.name, new_path.name)
+
+            # Notify TVHeadend about the file move
+            try:
+                tvheadend = self.config.get("tvheadend", {})
+                if tvheadend.get("enabled", False) and tvheadend.get("url"):
+                    client = TVHeadendClient(tvheadend)
+                    response = client.post(
+                        "/api/dvr/entry/filemoved",
+                        data={"src": str(old_path), "dst": str(new_path)},
+                        timeout=30,
+                    )
+                    response.raise_for_status()
+                    logger.info("Notified TVHeadend about renamed recording: %s", new_path.name)
+            except Exception as exc:
+                logger.warning("Could not notify TVHeadend about renamed file: %s", exc)
+
+            return True
+        except Exception as exc:
+            logger.error("Failed to rename recording: %s -> %s (%s)", old_path, new_path, exc)
+            return False
+
 
     def video_options(self, media: MediaInfo):
         if media.video_copy:
