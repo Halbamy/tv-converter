@@ -1,4 +1,4 @@
-# tv-converter v2.3.7
+# tv-converter
 
 `tv-converter` converts recordings from MythTV or TVHeadend and imports the
 result into TVHeadend.
@@ -12,9 +12,11 @@ The source type determines how new recordings are detected automatically:
   finished DVR entries after relevant `dvrentry`, `subscriptions`, or
   `connections` notifications.
 
-WebSocket notifications are only wake-up signals. Events received during a
-conversion are coalesced into one pending source scan and processed after the
-current recording has completed its import and postprocessing flow.
+WebSocket notifications wake both source scanning and TVHeadend busy-state
+checks. If TVHeadend starts recording or gains an active subscription while
+FFmpeg is running, conversion is paused until TVHeadend is idle again. While
+TVHeadend is busy, repeated WebSocket messages are coalesced and the REST busy
+status is checked at most once per minute.
 
 Source deletion is disabled for MythTV recordings so the converter cannot
 leave MythTV's database and related metadata in an inconsistent state.
@@ -25,12 +27,18 @@ leave MythTV's database and related metadata in an inconsistent state.
 Each recording is completed before the next one starts:
 
 1. Wait until TVHeadend has no active recordings and no active subscriptions.
-2. Transcode one recording.
+2. Transcode one recording, pausing it if TVHeadend becomes busy.
 3. Wait until TVHeadend is idle again.
 4. Update the destination TVHeadend instance.
-5. Refresh Plex when configured.
-6. Delete the source when `delete_source_after_import` is enabled and the
-   TVHeadend import succeeded. A failed Plex refresh does not prevent deletion.
+5. Delete the source when `delete_source_after_import` is enabled and the
+   TVHeadend import succeeded.
+6. Refresh Plex as the final postprocessing step when configured.
+
+Pause reasons such as `PV`, `TVH`, `MANUAL`, and `MQTT` are combined. FFmpeg
+resumes only after every active reason has been cleared. Before resuming from a
+TVHeadend pause, the source file and DVR UUID are checked again. If the user
+removed the recording, FFmpeg is stopped, its `.part` file is deleted, and the
+next queued recording is processed.
 
 When the TVHeadend source and destination URLs refer to the same instance,
 `/api/dvr/entry/filemoved` updates the existing DVR entry. Otherwise a new DVR
@@ -88,9 +96,23 @@ destination:
       username: tv-converter
       password: secret
       auth_code:
-    output:
-      directory: /media/storage0/tvheadend/imported
+    output: original
     delete_source_after_import: false
+```
+
+Both `output: original` and the expanded form below write each converted file
+beside its source recording:
+
+```yaml
+output:
+  directory: original
+```
+
+To use one fixed destination directory, specify its path:
+
+```yaml
+output:
+  directory: /media/storage0/tvheadend/imported
 ```
 
 Persistent authentication remains supported by the client. Some administrative
@@ -117,8 +139,15 @@ The configured destination output directory is searched recursively first;
 additional directories are searched in the order given. Only missing paths are
 changed, and the first exact filename match is sent to
 `/api/dvr/entry/filemoved`. Only entries returned by TVHeadend with the exact
-status `File missing` are processed. The old path is never accepted as the new
-match, and recordings intentionally removed through TVHeadend are ignored:
+status `File missing` are processed. If the file still exists at TVHeadend's
+registered path, it is re-registered by sending the same path as `src` and
+`dst`. Recordings intentionally removed through TVHeadend are ignored:
+
+When `output: original` or `output.directory: original` is configured and no
+additional search directory is supplied, every missing recording is searched
+recursively below its own previously registered parent directory. For example,
+`/dir/aufnahme/rec.mkv` is found again as
+`/dir/aufnahme/serien/rec.mkv`.
 
 ```bash
 tv-converter --repair-moved-recordings \
@@ -131,17 +160,13 @@ Use `--dry-run` to display the changes without updating TVHeadend.
 Search for TVHeadend recordings by substring without starting the converter:
 
 ```bash
-tv-converter --search-recordings --search "Tatort"
+tv-converter --search "Tatort"
 ```
 
-Use `--upcoming` to search upcoming recordings instead of finished ones:
-
-```bash
-tv-converter --search-recordings --search "Tatort" --upcoming
-```
-
-The search output displays the UUID, title, channel, timestamps, and filename.
-The UUID can be used with `--rename-recordings --uuid "..."`.
+All DVR entries are searched, including upcoming, finished, failed, and removed
+recordings. The search output displays the UUID, title, channel, timestamps,
+filename, status, file size, removal and duplicate flags, comment, and error
+details. The UUID can be used with `--rename-recordings --uuid "..."`.
 
 Rename completed TVHeadend recordings to the current naming schema and notify
 TVHeadend about the file moves:
@@ -168,9 +193,15 @@ Use `--dry-run` to preview the transcode plan without starting the conversion:
 tv-converter --transcode --uuid "12345678-1234-1234-1234-123456789abc" --dry-run
 ```
 
-The recording is fetched from TVHeadend by UUID, converted using the configured
-encoder, and imported back into TVHeadend. The source file may be deleted
-depending on the `delete_source_after_import` setting.
+When `delete_source_after_import` is enabled, dry-run output also reports which
+source file would be deleted after a successful TVHeadend update.
+
+The recording is fetched from TVHeadend by UUID and converted using the
+configured encoder. After a successful conversion, `/api/dvr/entry/filemoved`
+updates the existing DVR entry from the source path to the converted file, so
+the recording keeps its existing UUID. If `delete_source_after_import` is
+enabled, the old TVHeadend source file is then deleted. The configured Plex
+refresh runs last, after source deletion.
 
 The configured Plex refresh URL can be called independently without starting
 the converter or processing its queue:

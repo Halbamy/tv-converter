@@ -54,4 +54,4 @@ class RecordingQueue:
         return recording
 
     def _key(self, recording: Recording) -> str:
-        return f"{recording.source}:{recording.recording_id}:{recording.filename}"
+        return f"{recording.source}:{recording.recording_id}"

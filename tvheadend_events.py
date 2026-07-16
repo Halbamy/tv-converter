@@ -19,6 +19,7 @@ class TVHeadendEventListener:
     def __init__(self, base_url: str):
         self.url = self._websocket_url(base_url)
         self._changed = threading.Event()
+        self._state_changed = threading.Event()
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._socket: WebSocketApp | None = None
@@ -37,6 +38,7 @@ class TVHeadendEventListener:
 
         self._websocket_app_class = WebSocketApp
         self._stop.clear()
+        self._state_changed.clear()
         self._changed.set()
         self._thread = threading.Thread(
             target=self._run,
@@ -48,6 +50,7 @@ class TVHeadendEventListener:
     def stop(self) -> None:
         self._stop.set()
         self._changed.set()
+        self._state_changed.set()
 
         if self._socket is not None:
             self._socket.close()
@@ -68,6 +71,11 @@ class TVHeadendEventListener:
 
     def mark_scanned(self) -> None:
         self._changed.clear()
+        self._state_changed.clear()
+
+    @property
+    def state_change_event(self) -> threading.Event:
+        return self._state_changed
 
     def _run(self) -> None:
         assert self._websocket_app_class is not None
@@ -103,6 +111,7 @@ class TVHeadendEventListener:
             if notification_class in self.RELEVANT_CLASSES:
                 logger.debug("TVHeadend event received: %s", notification_class)
                 self._changed.set()
+                self._state_changed.set()
                 return
 
     def _on_error(self, websocket, error) -> None:

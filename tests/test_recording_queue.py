@@ -13,7 +13,27 @@ def recording(recording_id: str):
     )
 
 
+def recording_at(recording_id: str, filename: str):
+    return SimpleNamespace(
+        source="tvheadend",
+        recording_id=recording_id,
+        filename=Path(filename),
+    )
+
+
 class RecordingQueueProgressTests(unittest.TestCase):
+    def test_changed_path_does_not_enqueue_same_recording_again(self):
+        queue = RecordingQueue()
+        queue.add_new([recording_at("same-uuid", "/recordings/old.ts")])
+        queue.pop()
+
+        added = queue.add_new(
+            [recording_at("same-uuid", "/recordings/converted.mkv")]
+        )
+
+        self.assertEqual(added, 0)
+        self.assertEqual(len(queue), 0)
+
     def test_current_advances_for_each_recording(self):
         queue = RecordingQueue()
         first = recording("first")

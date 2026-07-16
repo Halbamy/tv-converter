@@ -31,6 +31,8 @@ class MQTTController:
         self.state = PVState(power="----", state="RUNNING", last_message=time.time(), mqtt_alive=True)
         self.client = None
         self.stop_event = threading.Event()
+        self._pause_lock = threading.Lock()
+        self._pause_reasons: set[str] = set()
         self.last_payload: dict[str, Any] | None = None
         self.topic_prefix = self.config.get("topic_prefix", "tv-converter").rstrip("/")
         self.status_topic = f"{self.topic_prefix}/status"
@@ -107,6 +109,7 @@ class MQTTController:
 
         self.state.last_message = time.time()
         self.state.mqtt_alive = True
+        self.resume("MQTT")
 
         try:
             data = json.loads(payload)
@@ -118,7 +121,7 @@ class MQTTController:
         self.state.power = str(surplus)
 
         if surplus >= int(self.config.get("resume_watt", 50)):
-            self.resume()
+            self.resume("PV")
         elif surplus <= int(self.config.get("pause_watt", 0)):
             self.pause("PV")
 
@@ -128,7 +131,7 @@ class MQTTController:
         if command == "pause":
             self.pause("MANUAL")
         elif command == "resume":
-            self.resume()
+            self.resume("MANUAL")
         elif command == "stop":
             self.control.stop_requested = True
             self.terminate_process()
@@ -146,37 +149,67 @@ class MQTTController:
                     self.pause("MQTT")
 
     def pause(self, reason: str) -> None:
-        target_state = f"PAUSED ({reason})"
+        reason = reason.upper()
 
-        if self.state.state == target_state:
+        with self._pause_lock:
+            already_paused = bool(self._pause_reasons)
+            self._pause_reasons.add(reason)
+            self._update_pause_state()
+
+        if already_paused:
             return
 
+        self._signal_process(signal.SIGSTOP)
+
+    def resume(self, reason: str = "MANUAL") -> None:
+        reason = reason.upper()
+
+        with self._pause_lock:
+            if reason not in self._pause_reasons:
+                return
+
+            self._pause_reasons.remove(reason)
+            should_resume = not self._pause_reasons
+            self._update_pause_state()
+
+        if should_resume:
+            self._signal_process(signal.SIGCONT)
+
+    def is_paused_for(self, reason: str) -> bool:
+        with self._pause_lock:
+            return reason.upper() in self._pause_reasons
+
+    def apply_pause_state(self) -> None:
+        """Pause a newly started process when any pause reason is active."""
+        with self._pause_lock:
+            should_pause = bool(self._pause_reasons)
+
+        if should_pause:
+            self._signal_process(signal.SIGSTOP)
+
+    def _update_pause_state(self) -> None:
+        if not self._pause_reasons:
+            self.state.state = "RUNNING"
+            return
+
+        reasons = ", ".join(sorted(self._pause_reasons))
+        self.state.state = f"PAUSED ({reasons})"
+
+    def _signal_process(self, sig: signal.Signals) -> None:
         process = self.process_getter()
 
         if process is not None and process.poll() is None:
             try:
-                os.kill(process.pid, signal.SIGSTOP)
+                os.kill(process.pid, sig)
             except ProcessLookupError:
                 pass
 
-        self.state.state = target_state
-
-    def resume(self) -> None:
-        if self.state.state == "RUNNING":
-            return
-
+    def terminate_process(self) -> None:
         process = self.process_getter()
 
         if process is not None and process.poll() is None:
             try:
                 os.kill(process.pid, signal.SIGCONT)
             except ProcessLookupError:
-                pass
-
-        self.state.state = "RUNNING"
-
-    def terminate_process(self) -> None:
-        process = self.process_getter()
-
-        if process is not None and process.poll() is None:
+                return
             process.terminate()

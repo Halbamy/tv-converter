@@ -86,7 +86,11 @@ class Converter:
         self._start_status_thread()
 
         try:
-            rc = self.runner.run(plan.command, self._on_progress)
+            rc = self.runner.run(
+                plan.command,
+                self._on_progress,
+                on_start=self.mqtt.apply_pause_state,
+            )
         finally:
             self._stop_status_thread()
             self.status.finish()

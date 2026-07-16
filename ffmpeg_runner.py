@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import subprocess
+import signal
+import os
 import threading
 from collections.abc import Callable
 
@@ -24,6 +26,7 @@ class FFmpegRunner:
         self,
         command: list[str],
         callback: Callable[[Progress, bool], None] | None = None,
+        on_start: Callable[[], None] | None = None,
     ) -> int:
         self.parser.reset()
         self.last_stderr = ""
@@ -35,6 +38,9 @@ class FFmpegRunner:
             text=True,
             bufsize=1,
         )
+
+        if on_start is not None:
+            on_start()
 
         assert self.process.stdout is not None
         assert self.process.stderr is not None
@@ -68,4 +74,8 @@ class FFmpegRunner:
 
     def terminate(self) -> None:
         if self.process and self.process.poll() is None:
+            try:
+                os.kill(self.process.pid, signal.SIGCONT)
+            except ProcessLookupError:
+                return
             self.process.terminate()

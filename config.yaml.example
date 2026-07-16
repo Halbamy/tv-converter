@@ -31,8 +31,7 @@ destination:
       password:
       auth_code:
 
-    output:
-      directory:
+    output: original
 
     delete_source_after_import: false
     comment: imported by tv-converter

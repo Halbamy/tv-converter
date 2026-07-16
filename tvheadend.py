@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -34,6 +35,7 @@ class TVHeadendMovedRecordingRepair:
         self,
         search_directories: list[Path],
         dry_run: bool = False,
+        search_registered_parent: bool = False,
     ) -> MovedRecordingRepairResult:
         directories = self._usable_directories(search_directories)
         result = MovedRecordingRepairResult()
@@ -56,7 +58,18 @@ class TVHeadendMovedRecordingRepair:
             result.checked += 1
             source = Path(filename)
             result.missing += 1
-            destination = self._find_first(source.name, directories, source)
+            source_directories = directories
+
+            if search_registered_parent and source.parent.is_dir():
+                source_directories = self._usable_directories(
+                    [source.parent, *directories]
+                )
+
+            destination = (
+                source
+                if source.is_file()
+                else self._find_first(source.name, source_directories)
+            )
 
             if destination is None:
                 result.not_found += 1
@@ -64,13 +77,17 @@ class TVHeadendMovedRecordingRepair:
                 continue
 
             result.found += 1
+            same_path = destination.resolve() == source.resolve()
 
             if dry_run:
-                logger.info(
-                    "Would update TVHeadend recording path: %s -> %s",
-                    source,
-                    destination,
-                )
+                if same_path:
+                    logger.info("Would re-register TVHeadend recording: %s", source)
+                else:
+                    logger.info(
+                        "Would update TVHeadend recording path: %s -> %s",
+                        source,
+                        destination,
+                    )
                 continue
 
             try:
@@ -91,11 +108,14 @@ class TVHeadendMovedRecordingRepair:
                 continue
 
             result.updated += 1
-            logger.info(
-                "Updated TVHeadend recording path: %s -> %s",
-                source,
-                destination,
-            )
+            if same_path:
+                logger.info("Re-registered TVHeadend recording: %s", source)
+            else:
+                logger.info(
+                    "Updated TVHeadend recording path: %s -> %s",
+                    source,
+                    destination,
+                )
 
         return result
 
@@ -133,13 +153,10 @@ class TVHeadendMovedRecordingRepair:
     def _find_first(
         filename: str,
         directories: list[Path],
-        source: Path,
     ) -> Path | None:
-        source = source.resolve()
-
         for directory in directories:
             for candidate in directory.rglob(escape(filename)):
-                if candidate.is_file() and candidate.resolve() != source:
+                if candidate.is_file():
                     return candidate
 
         return None
@@ -158,43 +175,93 @@ class TVHeadendMovedRecordingRepair:
 
 
 class TVHeadendStateMonitor:
-    def __init__(self, config: dict, poll_interval: int = 300):
+    def __init__(
+        self,
+        config: dict,
+        poll_interval: int = 300,
+        busy_recheck_interval: int = 60,
+        change_event: threading.Event | None = None,
+    ):
         self.config = config or {}
         self.poll_interval = poll_interval
+        self.busy_recheck_interval = busy_recheck_interval
+        self.change_event = change_event
         self.client = TVHeadendClient(config)
 
     def wait_until_not_busy(
         self,
         on_busy: Callable[[int, int], None] | None = None,
         on_ready: Callable[[], None] | None = None,
-    ) -> None:
+        stop_event: threading.Event | None = None,
+    ) -> bool:
         waited = False
+        last_reported_counts: tuple[int, int] | None = None
+        next_periodic_report = 0.0
 
         while True:
+            if stop_event is not None and stop_event.is_set():
+                return False
+
             recordings, subscriptions = self.busy_counts()
 
             if recordings == 0 and subscriptions == 0:
                 if waited and on_ready is not None:
                     on_ready()
-                return
+                return True
 
             waited = True
 
             if on_busy is not None:
                 on_busy(recordings, subscriptions)
 
-            logger.info(
-                "TVHeadend busy (recordings=%s, subscriptions=%s), waiting %s seconds.",
-                recordings,
-                subscriptions,
-                self.poll_interval,
-            )
-            time.sleep(self.poll_interval)
+            counts = (recordings, subscriptions)
+            now = time.monotonic()
+
+            if counts != last_reported_counts or now >= next_periodic_report:
+                logger.info(
+                    "TVHeadend busy (recordings=%s, subscriptions=%s), waiting %s seconds.",
+                    recordings,
+                    subscriptions,
+                    self.busy_recheck_interval,
+                )
+                last_reported_counts = counts
+                next_periodic_report = now + self.poll_interval
+
+            if not self._wait_for_recheck(stop_event):
+                return False
+
+    def _wait_for_recheck(self, stop_event: threading.Event | None) -> bool:
+        if stop_event is None:
+            time.sleep(self.busy_recheck_interval)
+            return True
+
+        return not stop_event.wait(self.busy_recheck_interval)
 
     def busy_counts(self) -> tuple[int, int]:
         recordings = self._active_recording_count()
         subscriptions = self._active_subscription_count()
         return recordings, subscriptions
+
+    def recording_exists(self, recording_id: str) -> bool | None:
+        """Return whether a finished DVR entry exists, or None on API errors."""
+        try:
+            response = self.client.get(
+                "/api/dvr/entry/grid_finished",
+                params={"limit": 999999},
+                timeout=15,
+            )
+            response.raise_for_status()
+            entries = response.json().get("entries", [])
+        except Exception as exc:
+            logger.warning("Could not verify TVHeadend recording %s: %s", recording_id, exc)
+            return None
+
+        expected = str(recording_id).strip()
+        return any(
+            str(entry.get("uuid", entry.get("id", ""))).strip() == expected
+            and not bool(entry.get("fileremoved", entry.get("file_removed", False)))
+            for entry in entries
+        )
 
     def _active_recording_count(self) -> int:
         data = self._get_json(
@@ -333,7 +400,6 @@ class TVHeadendRecordingRenamer:
     def rename_recordings(
         self,
         config: dict,
-        output_directory: Path,
         uuid: str | None = None,
         dry_run: bool = False,
     ) -> RecordingRenameResult:
@@ -341,7 +407,6 @@ class TVHeadendRecordingRenamer:
         
         Args:
             config: Full application config
-            output_directory: Output directory path
             uuid: Optional UUID to rename only a specific recording
             dry_run: If True, don't actually rename files
         """
@@ -515,12 +580,11 @@ class TVHeadendRecordingSearcher:
         self.config = config or {}
         self.client = TVHeadendClient(config)
 
-    def search(self, search_string: str, search_finished: bool = True) -> list[dict]:
+    def search(self, search_string: str) -> list[dict]:
         """Search for recordings by substring in JSON entry.
         
         Args:
             search_string: Substring to search for (case-insensitive)
-            search_finished: If True, search finished recordings; if False, search upcoming
             
         Returns:
             List of matching entries with UUID and basic info
@@ -528,10 +592,7 @@ class TVHeadendRecordingSearcher:
         search_lower = search_string.lower()
         
         try:
-            if search_finished:
-                entries = self._get_finished_entries()
-            else:
-                entries = self._get_upcoming_entries()
+            entries = self._get_entries()
         except Exception as exc:
             logger.error("Failed to fetch TVHeadend recordings: %s", exc)
             return []
@@ -550,24 +611,23 @@ class TVHeadendRecordingSearcher:
                     "stop": int(entry.get("stop", 0)),
                     "channelname": str(entry.get("channelname", "")),
                     "filename": self._filename(entry),
+                    "status": self._field(entry, "status"),
+                    "filesize": self._field(entry, "filesize"),
+                    "fileremoved": self._field(entry, "fileremoved"),
+                    "removal": self._field(entry, "removal"),
+                    "duplicate": self._field(entry, "duplicate"),
+                    "comment": self._field(entry, "comment"),
+                    "data_errors": self._field(entry, "data_errors"),
+                    "errors": self._field(entry, "errors"),
+                    "errorcode": self._field(entry, "errorcode"),
                 })
 
         return results
 
-    def _get_finished_entries(self) -> list[dict]:
-        """Fetch all finished/completed recordings from TVHeadend."""
+    def _get_entries(self) -> list[dict]:
+        """Fetch all DVR entries from TVHeadend."""
         response = self.client.get(
-            "/api/dvr/entry/grid_finished",
-            params={"limit": 999999, "sort": "start", "dir": "ASC"},
-            timeout=30,
-        )
-        response.raise_for_status()
-        return list(response.json().get("entries", []))
-
-    def _get_upcoming_entries(self) -> list[dict]:
-        """Fetch all upcoming/recording entries from TVHeadend."""
-        response = self.client.get(
-            "/api/dvr/entry/grid_upcoming",
+            "/api/dvr/entry/grid",
             params={"limit": 999999, "sort": "start", "dir": "ASC"},
             timeout=30,
         )
@@ -586,6 +646,19 @@ class TVHeadendRecordingSearcher:
             return str(files[0].get("filename") or "")
 
         return ""
+
+    @staticmethod
+    def _field(entry: dict, name: str):
+        """Read a DVR field, falling back to the first file entry."""
+        value = entry.get(name)
+        if value is not None:
+            return value
+
+        files = entry.get("files") or []
+        if files and isinstance(files[0], dict):
+            return files[0].get(name)
+
+        return None
 
 
 class TVHeadendRecordingTranscoder:

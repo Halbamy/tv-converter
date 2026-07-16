@@ -21,12 +21,12 @@ class Encoder:
         return "sw" if encoder in {"software", "libx265"} else encoder
 
     def output_directory(self, recording: Recording) -> Path:
-        output_dir = destination_config(self.config)["output"]["directory"]
+        output = destination_config(self.config)["output"]
 
-        if output_dir == "original":
+        if output.get("mode") == "original":
             return recording.filename.parent
 
-        return Path(output_dir)
+        return Path(output["directory"])
 
     def output_filename(self, recording: Recording, suffix: str = ".mkv") -> Path:
         output_dir = self.output_directory(recording)

@@ -52,7 +52,17 @@ def source_config(cfg: dict[str, Any]) -> dict[str, Any]:
 def destination_config(cfg: dict[str, Any]) -> dict[str, Any]:
     destination = section(cfg, "destination")
     destination_type = destination.get("type", "tvheadend")
-    return section(destination, destination_type)
+    config = section(destination, destination_type)
+
+    output = config.get("output")
+
+    if output == "original" or (
+        isinstance(output, dict)
+        and str(output.get("directory", "")).strip().casefold() == "original"
+    ):
+        config = {**config, "output": {"mode": "original"}}
+
+    return config
 
 
 def validate_authentication(config: dict[str, Any], path: str) -> None:
@@ -109,9 +119,17 @@ def validate_config(cfg: dict[str, Any]) -> None:
         raise ConfigError("destination.tvheadend.url is required")
     validate_authentication(dst, "destination.tvheadend")
 
-    output = section(dst, "output")
-    if not output.get("directory"):
-        raise ConfigError("destination.tvheadend.output.directory is required")
+    output = dst.get("output")
+
+    if output == "original":
+        pass
+    elif isinstance(output, dict):
+        if not output.get("directory"):
+            raise ConfigError("destination.tvheadend.output.directory is required")
+    else:
+        raise ConfigError(
+            "destination.tvheadend.output must be 'original' or contain directory"
+        )
 
     if encoder.get("type", "auto") not in {
         "auto",

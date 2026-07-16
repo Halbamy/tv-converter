@@ -32,6 +32,10 @@ class TVHeadendSource(RecordingSource):
     def mark_scanned(self) -> None:
         self.events.mark_scanned()
 
+    @property
+    def state_change_event(self) -> threading.Event:
+        return self.events.state_change_event
+
     def get_recordings(self) -> list[Recording]:
         response = self.client.get(
             "/api/dvr/entry/grid_finished",

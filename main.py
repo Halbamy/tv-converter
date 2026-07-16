@@ -6,6 +6,7 @@ import argparse
 import signal
 import sys
 import threading
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -41,16 +42,63 @@ def filter_recordings(recordings, cfg):
     return result[:limit] if limit > 0 else result
 
 
+def delete_source_if_configured(
+    config: dict,
+    recording,
+    target: Path,
+    dry_run: bool = False,
+) -> None:
+    dst_cfg = destination_config(config)
+
+    if getattr(recording, "deletepending", False):
+        logger.info(
+            "Refusing to delete deletepending source file: %s",
+            recording.filename,
+        )
+        return
+
+    if not bool(dst_cfg.get("delete_source_after_import", False)):
+        return
+
+    if recording.source == "mythtv":
+        logger.info(
+            "Source deletion is disabled for MythTV recordings: %s",
+            recording.filename,
+        )
+        return
+
+    source = recording.filename
+
+    if source.resolve() == target.resolve():
+        logger.error("Refusing to delete source because source and target are identical: %s", source)
+        return
+
+    if not source.exists():
+        logger.warning("Source file already missing: %s", source)
+        return
+
+    if dry_run:
+        logger.info("Would delete source file after successful TVHeadend update: %s", source)
+        return
+
+    source.unlink()
+    logger.info("Deleted source file: %s", source)
+
+
 class App:
     def __init__(self, config_path: str):
         self.config_path = config_path
         self.config = load_config(config_path)
         self.control = ServiceControl()
         self.control_event = threading.Event()
+        self.stop_event = threading.Event()
         self.queue = RecordingQueue()
         self.source = create_source(self.config)
         self.mqtt = MQTTController(self.config.get("mqtt", {}), lambda: None, self.control)
         self.converter: Converter | None = None
+        self._tvh_monitor_thread: threading.Thread | None = None
+        self._tvh_monitor_stop = threading.Event()
+        self._recording_removed = threading.Event()
         self._configure_components()
 
     def _configure_components(self) -> None:
@@ -58,12 +106,20 @@ class App:
         destination_cfg = destination_config(self.config)
         source_type = self.config["source"].get("type", "mythtv")
         monitor_cfg = source_cfg if source_type == "tvheadend" else destination_cfg
+        change_event = (
+            getattr(self.source, "state_change_event", None)
+            if source_type == "tvheadend"
+            else None
+        )
 
         self.tvheadend = TVHeadendImporter(
             destination_cfg,
             source_cfg if source_type == "tvheadend" else None,
         )
-        self.state_monitor = TVHeadendStateMonitor(monitor_cfg)
+        self.state_monitor = TVHeadendStateMonitor(
+            monitor_cfg,
+            change_event=change_event,
+        )
         self.plex = PlexPostprocessor(self.config.get("postprocessing", {}))
 
     def request_reload(self, signum=None, frame=None) -> None:
@@ -82,9 +138,12 @@ class App:
         self.source.start()
 
     def stop(self, signum=None, frame=None) -> None:
+        if not self.control.stop_requested:
+            logger.info("Stop requested.")
+
         self.control.stop_requested = True
         self.control_event.set()
-        self.source.stop()
+        self.stop_event.set()
 
         if self.converter is not None:
             self.converter.runner.terminate()
@@ -154,25 +213,54 @@ class App:
 
         if dry_run:
             self._print_plan(recording, plan, index, total, show_ffmpeg, show_tvh_json)
+            if plan.action not in {"skip_processed", "manual_review"}:
+                delete_source_if_configured(
+                    self.config,
+                    recording,
+                    plan.output_file,
+                    dry_run=True,
+                )
             return
 
         if plan.action in {"skip_processed", "manual_review"}:
             self.converter.convert(recording, index, total, plan)
             return
 
-        self._wait_until_tvh_not_busy()
+        if not self._wait_until_tvh_not_busy():
+            return
+
+        self._start_tvh_runtime_monitor(recording)
 
         try:
             converted = self.converter.convert(recording, index, total, plan)
         except RuntimeError as exc:
+            if self._recording_removed.is_set():
+                self._remove_partial_file(plan)
+                logger.warning(
+                    "Recording was removed while paused; skipping: %s",
+                    recording.title,
+                )
+                return
+
             logger.error("%s", exc)
             self.control.stop_requested = True
             return
+        finally:
+            self._stop_tvh_runtime_monitor()
 
         if converted is None:
             return
 
-        self._wait_until_tvh_not_busy()
+        if self._recording_removed.is_set():
+            self._remove_partial_file(plan)
+            logger.warning(
+                "Recording was removed while paused; skipping: %s",
+                recording.title,
+            )
+            return
+
+        if not self._wait_until_tvh_not_busy():
+            return
         import_ok = self.tvheadend.import_recording(recording, converted)
 
         if not import_ok:
@@ -185,11 +273,11 @@ class App:
         if show_tvh_json:
             print(self.tvheadend.build_json(recording, converted))
 
-        plex_ok = self.plex.refresh()
-        if not plex_ok:
-            logger.error("Plex refresh failed. Continuing with source file deletion.")
-
         self._delete_source_if_configured(converted)
+
+        if not self.plex.refresh():
+            logger.error("Final Plex refresh failed.")
+
         self.mqtt.publish_runtime_status(
             state="finished",
             source=recording.source,
@@ -202,7 +290,7 @@ class App:
             queue={"current": index, "total": total},
         )
 
-    def _wait_until_tvh_not_busy(self) -> None:
+    def _wait_until_tvh_not_busy(self) -> bool:
         def publish_busy(recordings: int, subscriptions: int) -> None:
             self.mqtt.publish_runtime_status(
                 state="paused (tvh busy)",
@@ -216,44 +304,97 @@ class App:
                 queue={"current": self.queue.current, "total": self.queue.total},
             )
 
-        self.state_monitor.wait_until_not_busy(
+        return self.state_monitor.wait_until_not_busy(
             on_busy=publish_busy,
             on_ready=publish_ready,
+            stop_event=self.stop_event,
         )
 
+    def _start_tvh_runtime_monitor(self, recording) -> None:
+        self._recording_removed = threading.Event()
+        self._tvh_monitor_stop = threading.Event()
+        self._tvh_monitor_thread = None
+
+        if recording.source != "tvheadend" or self.state_monitor.change_event is None:
+            return
+
+        self._tvh_monitor_thread = threading.Thread(
+            target=self._monitor_tvh_during_conversion,
+            args=(recording,),
+            name="tvheadend-busy-monitor",
+            daemon=True,
+        )
+        self._tvh_monitor_thread.start()
+
+    def _stop_tvh_runtime_monitor(self) -> None:
+        self._tvh_monitor_stop.set()
+
+        if self._tvh_monitor_thread is not None:
+            self._tvh_monitor_thread.join(timeout=2)
+            self._tvh_monitor_thread = None
+
+        self.mqtt.resume("TVH")
+
+    def _monitor_tvh_during_conversion(self, recording) -> None:
+        change_event = self.state_monitor.change_event
+        next_fallback_check = time.monotonic() + self.state_monitor.poll_interval
+        tvh_busy = False
+
+        while not self._tvh_monitor_stop.is_set() and not self.stop_event.is_set():
+            changed = change_event.wait(timeout=0.5)
+            now = time.monotonic()
+            fallback_due = now >= next_fallback_check
+
+            if not changed and not fallback_due:
+                continue
+
+            if changed:
+                change_event.clear()
+
+            if tvh_busy and not fallback_due:
+                continue
+
+            recordings, subscriptions = self.state_monitor.busy_counts()
+
+            if recordings or subscriptions:
+                tvh_busy = True
+                next_fallback_check = now + self.state_monitor.busy_recheck_interval
+                self.mqtt.pause("TVH")
+                continue
+
+            tvh_busy = False
+            next_fallback_check = now + self.state_monitor.poll_interval
+
+            if not self.mqtt.is_paused_for("TVH"):
+                continue
+
+            entry_exists = self.state_monitor.recording_exists(recording.recording_id)
+            file_exists = recording.filename.is_file()
+
+            if not file_exists or entry_exists is False:
+                self._recording_removed.set()
+                logger.warning(
+                    "Recording disappeared while TVHeadend was busy: %s",
+                    recording.filename,
+                )
+                assert self.converter is not None
+                self.converter.runner.terminate()
+                return
+
+            self.mqtt.resume("TVH")
+
+    @staticmethod
+    def _remove_partial_file(plan) -> None:
+        if plan.temp_file is not None and plan.temp_file.exists():
+            plan.temp_file.unlink()
+            logger.info("Removed unfinished conversion: %s", plan.temp_file)
+
     def _delete_source_if_configured(self, converted) -> None:
-        dst_cfg = destination_config(self.config)
-
-        if getattr(converted.source, "deletepending", False):
-            logger.info(
-                "Refusing to delete deletepending source file: %s",
-                converted.source.filename,
-            )
-            return
-
-        if not bool(dst_cfg.get("delete_source_after_import", False)):
-            return
-
-        if converted.source.source == "mythtv":
-            logger.info(
-                "Source deletion is disabled for MythTV recordings: %s",
-                converted.source.filename,
-            )
-            return
-
-        source = converted.source.filename
-        target = converted.output_file
-
-        if source.resolve() == target.resolve():
-            logger.error("Refusing to delete source because source and target are identical: %s", source)
-            return
-
-        if not source.exists():
-            logger.warning("Source file already missing: %s", source)
-            return
-
-        source.unlink()
-        logger.info("Deleted source file: %s", source)
+        delete_source_if_configured(
+            self.config,
+            converted.source,
+            converted.output_file,
+        )
 
     def _print_plan(
         self,
@@ -287,7 +428,11 @@ class App:
                 f"Video: {plan.media.video_codec} "
                 f"{plan.media.width}x{plan.media.height} -> {plan.encoder_name}"
             )
-            print(f"Audio: stream {plan.media.audio_stream_index} {plan.media.audio_codec}")
+            audio_target = "copy" if plan.media.audio_copy else "aac"
+            print(
+                f"Audio: stream {plan.media.audio_stream_index} "
+                f"{plan.media.audio_codec} -> {audio_target}"
+            )
             print(f"Profile: {plan.media.profile.name}")
 
         if show_ffmpeg and plan.command:
@@ -330,9 +475,9 @@ def main() -> int:
         help="rename all completed TVHeadend recordings to the current naming schema",
     )
     command.add_argument(
-        "--search-recordings",
-        action="store_true",
-        help="search TVHeadend recordings by substring",
+        "--search",
+        metavar="STRING",
+        help="search all TVHeadend DVR entries by substring",
     )
     command.add_argument(
         "--transcode",
@@ -349,17 +494,6 @@ def main() -> int:
         default=None,
         metavar="UUID",
         help="when used with --rename-recordings, rename only the recording with this UUID",
-    )
-    parser.add_argument(
-        "--search",
-        default=None,
-        metavar="STRING",
-        help="substring to search for (use with --search-recordings)",
-    )
-    parser.add_argument(
-        "--upcoming",
-        action="store_true",
-        help="when used with --search-recordings, search upcoming recordings instead of finished",
     )
     parser.add_argument(
         "--search-directory",
@@ -380,10 +514,7 @@ def main() -> int:
             plex = PlexPostprocessor(config.get("postprocessing", {}))
             return 0 if plex.refresh(force=True) else 1
 
-        if args.search_recordings:
-            if not args.search:
-                parser.error("--search-recordings requires --search")
-
+        if args.search is not None:
             config = load_config(args.config)
             tvheadend_config = destination_config(config)
             
@@ -392,7 +523,7 @@ def main() -> int:
                 return 1
             
             searcher = TVHeadendRecordingSearcher(tvheadend_config)
-            results = searcher.search(args.search, search_finished=not args.upcoming)
+            results = searcher.search(args.search)
             
             if not results:
                 print("No recordings found matching search criteria.")
@@ -409,6 +540,19 @@ def main() -> int:
                 print(f"  Stop: {stop_time}")
                 if result['filename']:
                     print(f"  File: {result['filename']}")
+                for label, field in (
+                    ("Status", "status"),
+                    ("Filesize", "filesize"),
+                    ("File removed", "fileremoved"),
+                    ("Removal", "removal"),
+                    ("Duplicate", "duplicate"),
+                    ("Comment", "comment"),
+                    ("Data errors", "data_errors"),
+                    ("Errors", "errors"),
+                    ("Error code", "errorcode"),
+                ):
+                    value = result[field]
+                    print(f"  {label}: {'-' if value is None or value == '' else value}")
                 print()
             
             return 0
@@ -421,9 +565,12 @@ def main() -> int:
                 logger.error("TVHeadend is not enabled in configuration")
                 return 1
             
-            output_dir = Path(tvheadend_config["output"]["directory"])
             renamer = TVHeadendRecordingRenamer(tvheadend_config)
-            result = renamer.rename_recordings(config, output_dir, uuid=args.uuid, dry_run=args.dry_run)
+            result = renamer.rename_recordings(
+                config,
+                uuid=args.uuid,
+                dry_run=args.dry_run,
+            )
             logger.info(
                 "Recording rename completed "
                 "(checked=%s, renamed=%s, skipped=%s, errors=%s).",
@@ -475,13 +622,25 @@ def main() -> int:
                         f"Video: {plan.media.video_codec} "
                         f"{plan.media.width}x{plan.media.height} -> {plan.encoder_name}"
                     )
-                    print(f"Audio: stream {plan.media.audio_stream_index} {plan.media.audio_codec}")
+                    audio_target = "copy" if plan.media.audio_copy else "aac"
+                    print(
+                        f"Audio: stream {plan.media.audio_stream_index} "
+                        f"{plan.media.audio_codec} -> {audio_target}"
+                    )
                     print(f"Profile: {plan.media.profile.name}")
                 elif plan.action == "skip_processed":
                     print("Mode: already processed by tv-converter (skip)")
                 elif plan.action == "manual_review":
                     print("Mode: manual review required (skip)")
                     print(f"Reason: {plan.message}")
+
+                if plan.action not in {"skip_processed", "manual_review"}:
+                    delete_source_if_configured(
+                        config,
+                        recording,
+                        plan.output_file,
+                        dry_run=True,
+                    )
                 
                 return 0
             
@@ -494,15 +653,30 @@ def main() -> int:
                     logger.warning("Transcoding did not produce output")
                     return 1
                 
-                # Notify TVHeadend about the new import
+                # Update the existing DVR entry so its UUID is preserved.
                 try:
-                    tvheadend = TVHeadendImporter(tvheadend_config, None)
+                    tvheadend = TVHeadendImporter(tvheadend_config, tvheadend_config)
                     if tvheadend.import_recording(recording, converted):
-                        logger.info("Successfully imported converted recording to TVHeadend")
+                        logger.info(
+                            "Updated TVHeadend recording after transcode: %s",
+                            recording.recording_id,
+                        )
                     else:
-                        logger.warning("TVHeadend import failed or was skipped")
+                        logger.error("TVHeadend recording update was skipped")
+                        return 1
                 except Exception as exc:
-                    logger.warning("Could not import recording to TVHeadend: %s", exc)
+                    logger.error("Could not update TVHeadend recording: %s", exc)
+                    return 1
+
+                delete_source_if_configured(
+                    config,
+                    converted.source,
+                    converted.output_file,
+                )
+
+                plex = PlexPostprocessor(config.get("postprocessing", {}))
+                if not plex.refresh():
+                    logger.error("Final Plex refresh failed.")
                 
                 logger.info("Recording transcode completed successfully: %s", recording.title)
                 return 0
@@ -513,10 +687,20 @@ def main() -> int:
         if args.repair_moved_recordings:
             config = load_config(args.config)
             destination = destination_config(config)
-            directories = [Path(destination["output"]["directory"])]
+            output = destination["output"]
+            original_mode = output.get("mode") == "original"
+            directories = []
+
+            if not original_mode:
+                directories.append(Path(output["directory"]))
+
             directories.extend(Path(value) for value in args.search_directory)
             repair = TVHeadendMovedRecordingRepair(destination)
-            result = repair.repair(directories, dry_run=args.dry_run)
+            result = repair.repair(
+                directories,
+                dry_run=args.dry_run,
+                search_registered_parent=original_mode,
+            )
             logger.info(
                 "Moved recording repair completed "
                 "(checked=%s, missing=%s, found=%s, updated=%s, not_found=%s, "
